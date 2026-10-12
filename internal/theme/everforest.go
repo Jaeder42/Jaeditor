@@ -1,6 +1,6 @@
 package theme
 
-// Everforest, medium background — aw's default, matching the nvim
+// Everforest, medium background — jaed's default, matching the nvim
 // colorscheme the workspace embeds. Values from sainnhe/everforest.
 var Everforest = Theme{
 	Name:          "everforest",

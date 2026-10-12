@@ -1,4 +1,4 @@
-// Package theme defines aw's semantic palette: the colors the TUI chrome
+// Package theme defines jaed's semantic palette: the colors the TUI chrome
 // renders with, and the palette advertised to guest programs over the
 // PTY. One theme drives everything.
 package theme

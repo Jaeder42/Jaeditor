@@ -1,8 +1,8 @@
-# aw — an AI workspace TUI
+# jaed — an AI workspace TUI
 
 An editor, a terminal, and a bring-your-own agent side panel, composed as
 embedded terminal panes in one Bubble Tea TUI. The host terminal (Ghostty)
-does the rendering; `aw` is just text.
+does the rendering; `jaed` is just text.
 
 ```
 ┌──────────────────┬───────────┐
@@ -11,7 +11,7 @@ does the rendering; `aw` is just text.
 ├──────────────────┤           │
 │  terminal         │           │
 └──────────────────┴───────────┘
- aw · chess · everforest  ● nvim  ○ zsh  ● pi      ctrl+hjkl focus · ctrl+q chrome
+ jaed · chess · everforest  ● nvim  ○ zsh  ● pi      ctrl+hjkl focus · ctrl+q chrome
 ```
 
 ## Install
@@ -29,10 +29,10 @@ Restart your terminal (or `source ~/.zshrc`) once.
 ## Usage
 
 ```sh
-aw                         # workspace in the current directory
-aw ~/dev/chess             # a project directory
-aw -a opencode ~/dev/chess # bring your own agent
-aw --theme everforest ~/dev/chess
+jaed                         # workspace in the current directory
+jaed ~/dev/chess             # a project directory
+jaed -a opencode ~/dev/chess # bring your own agent
+jaed --theme everforest ~/dev/chess
 ```
 
 ## Keys
@@ -73,7 +73,7 @@ process live — `ctrl+q` `s` `j/k` `enter` — without leaving the session.
 ## Bring your own agent
 
 Builtin registry: `pi` (default), `opencode`, `shell`. Add your own in
-`~/.config/aw/agents.conf`:
+`~/.config/jaed/agents.conf`:
 
 ```
 # name = command [args...]

@@ -52,7 +52,7 @@ func TestPaneTitle(t *testing.T) {
 }
 
 // TestSpawnDir proves the child runs in the spec's directory — panes
-// must open in the workspace folder, not wherever aw was built from.
+// must open in the workspace folder, not wherever jaed was built from.
 func TestSpawnDir(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

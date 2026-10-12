@@ -24,9 +24,9 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"aw/internal/agents"
-	"aw/internal/pane"
-	"aw/internal/theme"
+	"jaed/internal/agents"
+	"jaed/internal/pane"
+	"jaed/internal/theme"
 )
 
 const (
@@ -470,7 +470,7 @@ func (a App) View() tea.View {
 	view := tea.NewView("")
 	view.AltScreen = true
 	if !a.ready {
-		view.SetContent("aw: starting…")
+		view.SetContent("jaed: starting…")
 		return view
 	}
 
@@ -549,7 +549,7 @@ func (a App) blitPane(rows *[]string, i int) {
 	}
 }
 
-// statusBar is one line: aw, the workspace, the theme, pane states, and
+// statusBar is one line: jaed, the workspace, the theme, pane states, and
 // the key hint.
 func (a App) statusBar() string {
 	t := a.theme
@@ -557,7 +557,7 @@ func (a App) statusBar() string {
 	fg := lipgloss.NewStyle().Background(surface).Foreground(lipgloss.Color(t.Fg))
 	dim := lipgloss.NewStyle().Background(surface).Foreground(lipgloss.Color(t.Dim))
 
-	left := fg.Render(" aw ") +
+	left := fg.Render(" jaed ") +
 		dim.Render("· "+filepath.Base(a.cwd)+" · "+t.Name)
 	if a.gitMode {
 		left += dim.Render(" · git")

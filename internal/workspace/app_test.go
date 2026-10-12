@@ -11,9 +11,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	agents2 "aw/internal/agents"
-	"aw/internal/pane"
-	"aw/internal/theme"
+	agents2 "jaed/internal/agents"
+	"jaed/internal/pane"
+	"jaed/internal/theme"
 )
 
 // testSpecs spawns three fast marker panes instead of nvim/zsh/pi.

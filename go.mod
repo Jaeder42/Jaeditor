@@ -1,4 +1,4 @@
-module aw
+module jaed
 
 go 1.27.0
 

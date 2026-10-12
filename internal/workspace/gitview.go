@@ -6,8 +6,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"aw/internal/git"
-	"aw/internal/theme"
+	"jaed/internal/git"
+	"jaed/internal/theme"
 )
 
 // gitView is the fullscreen git mode: changed files on the left, the

@@ -1,5 +1,5 @@
 #!/bin/sh
-# install.sh — build aw and put it on your PATH.
+# install.sh — build jaed and put it on your PATH.
 #
 # Usage:
 #   ./install.sh              # install to ~/.local/bin (default)
@@ -11,7 +11,7 @@
 set -eu
 
 INSTALL_DIR="${HOME}/.local/bin"
-BIN="${INSTALL_DIR}/aw"
+BIN="${INSTALL_DIR}/jaed"
 REPO="$(cd "$(dirname "$0")" && pwd)"
 
 if [ "${1:-}" = "--uninstall" ]; then
@@ -26,14 +26,14 @@ if [ "${1:-}" = "--uninstall" ]; then
 fi
 
 if ! command -v go >/dev/null 2>&1; then
-    echo "error: go is required to build aw (https://go.dev/dl/)" >&2
+    echo "error: go is required to build jaed (https://go.dev/dl/)" >&2
     exit 1
 fi
 
-echo "building aw…"
+echo "building jaed…"
 cd "$REPO"
 mkdir -p "$INSTALL_DIR"
-# Build aside and move into place so a running aw never sees a
+# Build aside and move into place so a running jaed never sees a
 # half-written binary (rename works on macOS even while executing).
 go build -o "${BIN}.tmp" .
 mv -f "${BIN}.tmp" "$BIN"
@@ -58,7 +58,7 @@ ensure_sh_rc() {
     if grep -qs '^[^#]*\.local/bin' "$rc"; then
         return
     fi
-    printf '\n# added by aw install\n%s\n' "$export_line" >> "$rc"
+    printf '\n# added by jaed install\n%s\n' "$export_line" >> "$rc"
     sh_added=$((sh_added + 1))
     echo "  PATH added to $rc"
 }
@@ -73,7 +73,7 @@ if [ "$sh_added" -eq 0 ] && ! [ -f "${HOME}/.zshrc" ] && ! [ -f "${HOME}/.bashrc
     */zsh) rc="${HOME}/.zshrc" ;;
     *)     rc="${HOME}/.bashrc" ;;
     esac
-    printf '# added by aw install\n%s\n' "$export_line" > "$rc"
+    printf '# added by jaed install\n%s\n' "$export_line" > "$rc"
     sh_created=1
     echo "  created $rc with the PATH line"
 fi
@@ -83,7 +83,7 @@ fish_rc="${HOME}/.config/fish/config.fish"
 if [ -d "${HOME}/.config/fish" ] || case "${SHELL:-}" in */fish) true ;; *) false ;; esac; then
     if ! grep -qs '^[^#]*\.local/bin' "$fish_rc" 2>/dev/null; then
         mkdir -p "${HOME}/.config/fish"
-        printf '\n# added by aw install\n%s\n' "$fish_line" >> "$fish_rc"
+        printf '\n# added by jaed install\n%s\n' "$fish_line" >> "$fish_rc"
         echo "  PATH added to $fish_rc"
     fi
 fi
@@ -98,4 +98,4 @@ case ":${PATH}:" in
     echo "  source ~/.zshrc   # (or your shell's rc)"
     ;;
 esac
-echo "run: aw ~/dev/chess"
+echo "run: jaed ~/dev/chess"

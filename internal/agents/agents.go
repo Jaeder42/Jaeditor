@@ -1,6 +1,6 @@
 // Package agents is the bring-your-own-agent registry: the commands that
 // may run in the agent pane. Builtin entries plus user-defined agents
-// from ~/.config/aw/agents.conf ("name = command [args...]").
+// from ~/.config/jaed/agents.conf ("name = command [args...]").
 package agents
 
 import (

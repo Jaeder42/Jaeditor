@@ -4,8 +4,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"aw/internal/agents"
-	"aw/internal/theme"
+	"jaed/internal/agents"
+	"jaed/internal/theme"
 )
 
 // picker is the agent-swap popup: the registered agents with one
