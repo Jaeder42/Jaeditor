@@ -1,5 +1,7 @@
 # jaed — an AI workspace TUI
 
+![jaed](assets/screenshot.png)
+
 An editor, a terminal, and a bring-your-own agent side panel, composed as
 embedded terminal panes in one Bubble Tea TUI. The host terminal (Ghostty)
 does the rendering; `jaed` is just text.
