@@ -14,14 +14,25 @@ does the rendering; `aw` is just text.
  aw · chess · everforest  ● nvim  ○ zsh  ● pi      ctrl+hjkl focus · ctrl+q chrome
 ```
 
+## Install
+
+```sh
+./install.sh              # builds and installs to ~/.local/bin
+./install.sh --uninstall   # removes it
+```
+
+The installer wires `~/.local/bin` into your PATH for zsh, bash, and
+fish — appending a guarded export to each existing rc file, never
+duplicating lines. Re-run it after pulling changes to rebuild.
+Restart your terminal (or `source ~/.zshrc`) once.
+
 ## Usage
 
 ```sh
-go build -o aw .
-./aw                       # workspace in the current directory
-./aw ~/dev/chess           # a project directory
-./aw -a opencode ~/dev/chess   # bring your own agent
-./aw --theme everforest ~/dev/chess
+aw                         # workspace in the current directory
+aw ~/dev/chess             # a project directory
+aw -a opencode ~/dev/chess # bring your own agent
+aw --theme everforest ~/dev/chess
 ```
 
 ## Keys
