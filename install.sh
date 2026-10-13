@@ -88,6 +88,11 @@ if [ -d "${HOME}/.config/fish" ] || case "${SHELL:-}" in */fish) true ;; *) fals
     fi
 fi
 
+# Optional pi live link (manual by design — see README).
+if [ -f "${REPO}/assets/jaed.ts" ] && ! [ -f "${HOME}/.pi/agent/extensions/jaed.ts" ]; then
+    echo "optional pi live link: cp ${REPO}/assets/jaed.ts ~/.pi/agent/extensions/jaed.ts"
+fi
+
 # Current shell already knows the dir? Then nothing to source.
 case ":${PATH}:" in
 *":${INSTALL_DIR}:"*)

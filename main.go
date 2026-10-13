@@ -64,12 +64,18 @@ func main() {
 		}
 	}
 
+	editorArgs := []string{"."}
+	if filepath.Base(*editorName) == "nvim" {
+		// Report the active buffer via the terminal title: the chrome-mode
+		// "c" key pushes it to the agent pane (see internal/workspace/link.go).
+		editorArgs = append(editorArgs, workspace.NvimTitleArgs()...)
+	}
 	specs := []pane.Spec{
 		// "nvim ." opens the workspace folder's file listing; "." resolves
 		// against Dir, the folder jaed was launched in.
-		{Command: *editorName, Args: []string{"."}, Dir: absDir, Background: th.Bg}, // main
-		{Command: agents.Shell.Command, Dir: absDir, Background: th.Bg},             // terminal
-		{Command: agent.Command, Args: agent.Args, Dir: absDir, Background: th.Bg},  // agent
+		{Command: *editorName, Args: editorArgs, Dir: absDir, Background: th.Bg},   // main
+		{Command: agents.Shell.Command, Dir: absDir, Background: th.Bg},            // terminal
+		{Command: agent.Command, Args: agent.Args, Dir: absDir, Background: th.Bg}, // agent
 	}
 	panes := make([]pane.Pane, len(specs))
 	for i, spec := range specs {

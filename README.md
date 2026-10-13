@@ -50,6 +50,7 @@ jaed --theme everforest ~/dev/chess
 | `a` | chrome | hide/show the agent pane (process keeps running) |
 | `s` | chrome | agent picker popup |
 | `g` | chrome | fullscreen git view (panes keep running) |
+| `c` | chrome | push the editor's active file to the agent pane |
 | `H/J/K/L` | chrome | resize the grid (agent width / terminal height) |
 | `Q` | chrome | quit (always works; legacy terminals can't report `ctrl+shift+q`) |
 | `j/k` · enter · esc | picker | move · swap agent · close |
@@ -58,6 +59,34 @@ jaed --theme everforest ~/dev/chess
 The git view shows changed files grouped **staged / unstaged /
 untracked**, the selected file's diff colored to the theme, and the
 branch in its header. `Q` quits from there too.
+
+## Editor ↔ agent
+
+jaed starts nvim with a titlestring of `expand("%:p")`, so the pane's
+terminal title always names the file being edited (bonus: your
+terminal tab shows it too). `ctrl+q` then `c` pushes that file to the
+agent pane: jaed types an `@/abs/path/to/file ` mention into the
+agent's input and focuses it, so the next keystrokes finish your
+prompt — "review the error handling" — and pi (or opencode) attaches
+the file as context. No file open, agent hidden, or agent dead: `c`
+degrades gracefully.
+
+### Live awareness
+
+With the optional pi extension, the agent is *passively* aware: jaed
+continuously publishes the active buffer to
+`$TMPDIR/jaed-active-<hash-of-workspace>`, and the extension injects
+it as a system-prompt section on every prompt plus a
+`jaed_active_file` tool the model can call anytime. Install (manual,
+one time):
+
+```sh
+mkdir -p ~/.pi/agent/extensions
+cp assets/jaed.ts ~/.pi/agent/extensions/jaed.ts
+```
+
+pi announces `jaed link: editing <path>` when it starts inside a
+jaed workspace, and stays inert when run standalone.
 
 Hidden panes show as `◇` in the status bar. Hiding the focused pane
 releases focus to chrome mode; hidden panes keep running and re-layout

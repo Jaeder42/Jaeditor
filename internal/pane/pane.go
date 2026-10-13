@@ -3,8 +3,10 @@
 package pane
 
 import (
+	"bytes"
 	"context"
 	"path/filepath"
+	"sync/atomic"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -36,6 +38,10 @@ type Pane struct {
 	transport spanreed.Transport
 	session   *windrunner.Session
 	title     string
+	// bracketedPaste tracks whether the guest enabled DECSET 2004; a
+	// pointer because Pane is copied around and the watcher goroutine
+	// writes it concurrently.
+	bracketedPaste *atomic.Bool
 }
 
 // ExitMsg reports that a pane's process exited.
@@ -72,12 +78,64 @@ func Spawn(ctx context.Context, spec Spec, cols, rows int) (Pane, error) {
 	if sp, ok := transport.(sessionProvider); ok {
 		session = sp.Session()
 	}
-	return Pane{
-		term:      spanreed.New(transport, cols, rows, opts...),
-		transport: transport,
-		session:   session,
-		title:     filepath.Base(spec.Command),
-	}, nil
+	p := Pane{
+		term:           spanreed.New(transport, cols, rows, opts...),
+		transport:      transport,
+		session:        session,
+		title:          filepath.Base(spec.Command),
+		bracketedPaste: &atomic.Bool{},
+	}
+	if session != nil {
+		go watchPasteMode(session, p.bracketedPaste)
+	}
+	return p, nil
+}
+
+// watchPasteMode tracks the guest's bracketed-paste mode (DECSET 2004)
+// from a second subscription on the session, so pane.Paste can bracket
+// pastes exactly when the guest expects them.
+func watchPasteMode(session *windrunner.Session, enabled *atomic.Bool) {
+	_, sub := session.Attach(8)
+	const (
+		set2004 = "\x1b[?2004h"
+		res2004 = "\x1b[?2004l"
+	)
+	var carry []byte
+	for chunk := range sub.Output() {
+		carry = append(carry, chunk...)
+		for {
+			i := bytes.Index(carry, []byte(set2004))
+			j := bytes.Index(carry, []byte(res2004))
+			if i < 0 && j < 0 {
+				break
+			}
+			if i >= 0 && (j < 0 || i < j) {
+				enabled.Store(true)
+				carry = carry[i+len(set2004):]
+			} else {
+				enabled.Store(false)
+				carry = carry[j+len(res2004):]
+			}
+		}
+		if len(carry) > 16 {
+			carry = carry[len(carry)-16:]
+		}
+	}
+}
+
+// Paste delivers pasted text to the guest: wrapped in bracketed-paste
+// markers when the guest enabled DECSET 2004 (TUIs like nvim and pi),
+// raw bytes otherwise, so plain programs never see stray escapes.
+func (p Pane) Paste(text string) error {
+	if p.bracketedPaste != nil && p.bracketedPaste.Load() {
+		return p.Write([]byte("\x1b[200~" + text + "\x1b[201~"))
+	}
+	return p.Write([]byte(text))
+}
+
+// BracketedPaste reports whether the guest asked for bracketed paste.
+func (p Pane) BracketedPaste() bool {
+	return p.bracketedPaste != nil && p.bracketedPaste.Load()
 }
 
 // Init starts the frame pump.

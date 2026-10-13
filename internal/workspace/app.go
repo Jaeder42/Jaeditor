@@ -52,9 +52,14 @@ type App struct {
 	pick       picker
 	gitMode    bool
 	git        gitView
-	width      int
-	height     int
-	ready      bool
+	activeFile string // live-link path (see link.go)
+	activeSeen string // last title published to it
+	// bufferQuery asks the editor pane for the active file; overridable
+	// in tests.
+	bufferQuery func() (string, error)
+	width       int
+	height      int
+	ready       bool
 }
 
 // New builds the workspace around already-spawned panes, with the main
@@ -76,6 +81,8 @@ func New(panes []pane.Pane, specs []pane.Spec, cwd string, th theme.Theme) App {
 	if len(app.panes) != PaneCount || len(app.specs) != PaneCount {
 		panic("workspace.New: expected one pane and spec per slot")
 	}
+	app.bufferQuery = app.editorBufferTitle
+	app.activeFile = activeFilePath(cwd)
 	app.panes[PaneMain].Focus()
 	return app
 }
@@ -89,11 +96,21 @@ func (a App) Init() tea.Cmd {
 }
 
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	a.syncActiveFile()
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		a.width, a.height = msg.Width, msg.Height
 		a.ready = true
 		return a, a.applyLayout()
+
+	case tea.PasteMsg:
+		// pastes go to the focused pane; chrome, git, and picker modes
+		// have no pane to receive them
+		if a.focus >= 0 && !a.dead[a.focus] {
+			_ = a.panes[a.focus].Paste(msg.Content)
+		}
+		return a, nil
 
 	case pane.ExitMsg:
 		for i := range a.panes {
@@ -186,6 +203,10 @@ func (a *App) key(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 				a.openGitView()
 				return nil, true
 			}
+		case 'c':
+			if msg.Mod == 0 {
+				return a.pushEditorContext(), true
+			}
 		case 'Q':
 			if msg.Mod&tea.ModCtrl == 0 {
 				a.closeAll()
@@ -236,6 +257,31 @@ func (a *App) moveTo(dir string) {
 		}
 		a.setFocus(from)
 	}
+}
+
+// pushEditorContext links the editor pane with the agent: it asks the
+// editor for the active file, types an @-mention of it into the agent's
+// input, and focuses the agent so the next keystrokes finish the prompt.
+// The agent (pi, opencode, …) attaches the file as context on submit.
+func (a *App) pushEditorContext() tea.Cmd {
+	if a.dead[PaneAgent] {
+		return nil
+	}
+	var cmd tea.Cmd
+	if a.hidden[PaneAgent] {
+		a.hidden[PaneAgent] = false
+		cmd = a.applyLayout()
+	}
+	a.setFocus(PaneAgent)
+	if a.dead[PaneMain] {
+		return cmd // no editor to ask
+	}
+	path, err := a.bufferQuery()
+	if err != nil || path == "" {
+		return cmd // no file open, or the editor is not listening
+	}
+	_ = a.panes[PaneAgent].Write([]byte("@" + path + " "))
+	return cmd
 }
 
 // togglePane hides or shows a pane. Hidden panes keep running; showing
@@ -593,7 +639,7 @@ func (a App) statusBar() string {
 	case a.focus >= 0:
 		hint = dim.Render("ctrl+hjkl focus · ctrl+q chrome · ctrl+shift+q quit")
 	default:
-		hint = dim.Render("hjkl focus · t/a hide · s swap · g git · HJKL resize · Q quit")
+		hint = dim.Render("hjkl focus · t/a hide · s swap · g git · c send file · HJKL resize · Q quit")
 	}
 
 	visible := ansi.StringWidth(left) + ansi.StringWidth(panes.String()) + ansi.StringWidth(hint)

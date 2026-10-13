@@ -1,7 +1,10 @@
 package pane
 
 import (
+	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -77,4 +80,82 @@ func TestSpawnDir(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("child did not run in /tmp; view was:\n%s", view)
+}
+
+func TestPasteBracketedWhenEnabled(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	t.Cleanup(cancel)
+
+	log := filepath.Join(t.TempDir(), "pastelog")
+	p, err := Spawn(ctx, Spec{
+		// a guest that enables DECSET 2004, then cats stdin to a log
+		Command: "/bin/sh",
+		Args:    []string{"-c", `printf '\x1b[?2004h'; cat >"` + log + `"`},
+	}, 40, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+
+	// wait for the mode watcher to see the enable
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && !p.BracketedPaste() {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !p.BracketedPaste() {
+		t.Fatal("watcher never saw DECSET 2004")
+	}
+
+	// trailing newline flushes the cooked-mode line discipline; the
+	// close marker stays buffered until the guest reads again, so the
+	// assertion targets the open marker and content
+	if err := p.Paste("hello\nworld\n"); err != nil {
+		t.Fatal(err)
+	}
+	assertLogContains(t, log, "\x1b[200~hello\nworld\n")
+}
+
+func TestPasteRawWhenNotEnabled(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	t.Cleanup(cancel)
+
+	log := filepath.Join(t.TempDir(), "pastelog")
+	p, err := Spawn(ctx, Spec{
+		// a guest that never enables 2004
+		Command: "/bin/sh",
+		Args:    []string{"-c", `cat >"` + log + `"`},
+	}, 40, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	if p.BracketedPaste() {
+		t.Fatal("no DECSET 2004 was sent; pane must not report bracketed")
+	}
+
+	if err := p.Paste("plain text\n"); err != nil {
+		t.Fatal(err)
+	}
+	assertLogContains(t, log, "plain text\n")
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(data, []byte("\x1b[200~")) {
+		t.Fatal("raw paste must not carry bracketed markers")
+	}
+}
+
+func assertLogContains(t *testing.T, path, want string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(path)
+		if err == nil && bytes.Contains(data, []byte(want)) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	data, _ := os.ReadFile(path)
+	t.Fatalf("log %q never contained %q; log was %q", path, want, data)
 }
