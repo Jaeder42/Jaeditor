@@ -12,11 +12,15 @@
 // Keys: ctrl+hjkl switches pane focus from anywhere. ctrl+q releases the
 // focused pane to chrome mode; in chrome mode hjkl focuses, HJKL resizes
 // the grid, and ctrl+q quits. Everything else reaches the focused pane.
+//
+// The terminal pane is tabbed: ctrl+t opens a shell tab, ctrl+pgup/pgdn
+// (or ctrl+shift+[/]) switches, and ctrl+w closes. See tabs.go.
 package workspace
 
 import (
 	"context"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,6 +48,8 @@ type App struct {
 	dead         []bool
 	hidden       []bool      // pane toggled away from the layout (process lives on)
 	spawnedAt    []time.Time // respawn time of each pane's current instance
+	termTabs     []termTab   // inactive terminal tabs, in display order (see tabs.go)
+	termPos      int         // position of the active terminal tab in the full order
 	layout       Layout
 	focus        int // pane index, or -1 for chrome mode
 	lastFocus    int
@@ -95,9 +101,13 @@ func New(panes []pane.Pane, specs []pane.Spec, cwd string, th theme.Theme, cfg s
 }
 
 func (a App) Init() tea.Cmd {
-	cmds := make([]tea.Cmd, 0, 2*len(a.panes))
+	cmds := make([]tea.Cmd, 0, 2*(len(a.panes)+len(a.termTabs)))
 	for i := range a.panes {
 		cmds = append(cmds, a.panes[i].Init(), a.panes[i].ExitCmd())
+	}
+	for i := range a.termTabs {
+		p := a.termTabs[i].pane
+		cmds = append(cmds, p.Init(), p.ExitCmd())
 	}
 	return tea.Batch(cmds...)
 }
@@ -123,6 +133,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for i := range a.panes {
 			if a.panes[i].ID() == msg.PaneID {
 				return a, a.respawn(i)
+			}
+		}
+		for i := range a.termTabs {
+			if a.termTabs[i].pane.ID() == msg.PaneID {
+				return a, a.respawnTermTab(i)
 			}
 		}
 		return a, nil
@@ -171,6 +186,38 @@ func (a *App) key(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		case "h", "j", "k", "l":
 			a.moveTo(dir)
 			return nil, true
+		}
+	}
+
+	// ctrl+t opens a terminal tab from anywhere: a new shell is harmless to
+	// every guest, and it is how a user reaches the tabs without focusing
+	// the terminal first.
+	if msg.Mod&tea.ModCtrl != 0 && msg.Code == 't' {
+		return a.newTermTab(), true
+	}
+
+	// Switching and closing are consumed only while the terminal is focused
+	// (or from chrome mode, which has no guest), so they never shadow the
+	// editor's own chords — nvim owns ctrl+w and ctrl+pgup/pgdn. ctrl+w and
+	// ctrl+shift+w both close; ctrl+shift+[ and ] switch alongside pgup/pgdn.
+	if (a.focus == PaneTerm || a.focus < 0) && msg.Mod&tea.ModCtrl != 0 {
+		switch msg.Code {
+		case 'w':
+			return a.closeTermTab(), true
+		case tea.KeyPgUp:
+			return a.switchTermTab(-1), true
+		case tea.KeyPgDown:
+			return a.switchTermTab(1), true
+		case '[', ']':
+			// Require shift: a bare ctrl+[ is ESC on legacy terminals.
+			if msg.Mod&tea.ModShift == 0 {
+				break
+			}
+			delta := -1
+			if msg.Code == ']' {
+				delta = 1
+			}
+			return a.switchTermTab(delta), true
 		}
 	}
 
@@ -357,7 +404,7 @@ func (a *App) applyLayout() tea.Cmd {
 	)
 	a.rects = []Rect{main, term, agent}
 
-	cmds := make([]tea.Cmd, 0, len(a.panes))
+	cmds := make([]tea.Cmd, 0, len(a.panes)+len(a.termTabs))
 	for i := range a.panes {
 		if a.dead[i] || a.hidden[i] {
 			continue
@@ -367,6 +414,20 @@ func (a *App) applyLayout() tea.Cmd {
 		var cmd tea.Cmd
 		a.panes[i], cmd = a.panes[i].SetSize(boxW, boxH)
 		cmds = append(cmds, cmd)
+	}
+	// Inactive terminal tabs share the terminal box, so switching to one is
+	// instant and its process always sees the right size.
+	if !a.hidden[PaneTerm] {
+		boxW := max(2, a.rects[PaneTerm].W-borderChrome)
+		boxH := max(2, a.rects[PaneTerm].H-borderChrome)
+		for i := range a.termTabs {
+			if a.termTabs[i].dead {
+				continue
+			}
+			var cmd tea.Cmd
+			a.termTabs[i].pane, cmd = a.termTabs[i].pane.SetSize(boxW, boxH)
+			cmds = append(cmds, cmd)
+		}
 	}
 	return tea.Batch(cmds...)
 }
@@ -539,13 +600,21 @@ func (a *App) swapAgent(ag agents.Agent) tea.Cmd {
 }
 
 func (a *App) forward(msg tea.Msg) tea.Cmd {
-	cmds := make([]tea.Cmd, 0, len(a.panes))
+	cmds := make([]tea.Cmd, 0, len(a.panes)+len(a.termTabs))
 	for i := range a.panes {
 		if a.dead[i] {
 			continue
 		}
 		var cmd tea.Cmd
 		a.panes[i], cmd = a.panes[i].Update(msg)
+		cmds = append(cmds, cmd)
+	}
+	for i := range a.termTabs {
+		if a.termTabs[i].dead {
+			continue
+		}
+		var cmd tea.Cmd
+		a.termTabs[i].pane, cmd = a.termTabs[i].pane.Update(msg)
 		cmds = append(cmds, cmd)
 	}
 	return tea.Batch(cmds...)
@@ -621,6 +690,9 @@ func (a *App) closeAll() {
 	for i := range a.panes {
 		a.panes[i].Close()
 	}
+	for i := range a.termTabs {
+		a.termTabs[i].pane.Close()
+	}
 }
 
 func (a App) View() tea.View {
@@ -686,17 +758,17 @@ func (a App) blitPane(rows *[]string, i int) {
 				Foreground(lipgloss.Color(a.theme.Bg))),
 		)
 	} else {
-		borderColor := a.theme.Border
-		if a.focus == i {
-			borderColor = a.theme.BorderFocused
-		}
 		box = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color(borderColor)).
+			BorderForeground(lipgloss.Color(a.borderColor(i))).
 			Render(a.panes[i].View())
 	}
 
 	lines := strings.Split(box, "\n")
+	// The terminal pane's top border doubles as its tab strip.
+	if i == PaneTerm && a.termTabCount() > 1 && rect.W >= 6 && len(lines) > 0 {
+		lines[0] = a.tabBar(rect)
+	}
 	for y := 0; y < rect.H && rect.Y+y < len(*rows); y++ {
 		line := ""
 		if y < len(lines) {
@@ -751,6 +823,11 @@ func (a App) statusBar() string {
 		default:
 			panes.WriteString(dim.Render("○ " + paneLabel(p)))
 		}
+		// The terminal slot shows which tab is active.
+		if i == PaneTerm && a.termTabCount() > 1 {
+			tab := lipgloss.NewStyle().Background(surface).Foreground(lipgloss.Color(t.Dim))
+			panes.WriteString(tab.Render(" " + strconv.Itoa(a.termPos+1) + "/" + strconv.Itoa(a.termTabCount())))
+		}
 		if i < len(a.panes)-1 {
 			panes.WriteString("  ")
 		}
@@ -762,8 +839,10 @@ func (a App) statusBar() string {
 		hint = dim.Render("j/k file · ctrl+d/u scroll · r refresh · g/esc close · Q quit")
 	case a.toolsMode:
 		hint = dim.Render("j/k tool · ctrl+d/u scroll · r rescan · T/esc close · Q quit")
+	case a.focus == PaneTerm:
+		hint = dim.Render("ctrl+t tab · ctrl+pgup/pgdn switch · ctrl+w close · ctrl+q chrome")
 	case a.focus >= 0:
-		hint = dim.Render("ctrl+hjkl focus · ctrl+q chrome · ctrl+shift+q quit")
+		hint = dim.Render("ctrl+t tab · ctrl+hjkl focus · ctrl+q chrome")
 	default:
 		hint = dim.Render("hjkl focus · t/a hide · s swap · g git · T tools · S settings · Q quit")
 	}

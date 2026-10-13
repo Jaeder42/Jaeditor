@@ -63,8 +63,6 @@ func TestToolsView(t *testing.T) {
 	}
 
 	// the kitty shift+t form opens it too, and esc closes.
-	model, _ = a.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
-	a = model.(App)
 	model, _ = a.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModShift})
 	a = model.(App)
 	if !a.toolsMode {
