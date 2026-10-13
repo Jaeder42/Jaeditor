@@ -8,6 +8,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/trentkm/spanreed v0.0.0-20260812224531-6088b6c39ae1
 	github.com/trentkm/windrunner v0.0.0-20260812034225-d372917a2843
+	golang.org/x/sys v0.47.0
 )
 
 require (
@@ -27,5 +28,4 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/sync v0.21.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
 )

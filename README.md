@@ -7,6 +7,7 @@ embedded terminal panes in one Bubble Tea TUI. The host terminal (Ghostty)
 does the rendering; `jaed` is just text.
 
 ```
+ sys cpu 12%  ·  ram 5.1G/8.0G  ·  net ↓1.2M/s ↑300K/s
 ┌──────────────────┬───────────┐
 │  nvim             │  agent    │
 │                   │  (pi)     │
@@ -15,6 +16,11 @@ does the rendering; `jaed` is just text.
 └──────────────────┴───────────┘
  jaed · chess · everforest  ● nvim  ○ zsh  ● pi      ctrl+hjkl focus · ctrl+q chrome
 ```
+
+The `sys` line is the resource bar: whole-machine CPU, memory, and
+network throughput, on by default and toggled from settings (`ctrl+q`
+`S` → `cpu/ram/net`). It samples every 3s (macOS via `top`/`vm_stat`/
+`netstat`, Linux via `/proc`).
 
 ## Install
 
@@ -135,10 +141,10 @@ process live — `ctrl+q` `s` `j/k` `enter` — without leaving the session.
 ## Settings
 
 `ctrl+q` then `S` opens the settings popup: theme (everforest,
-catppuccin, gruvbox, tokyonight — applied live) and the default agent
-(swaps the live pane and future launches). Changes persist to
-`~/.config/jaed/settings.json` immediately; `-a` and `--theme` flags
-override the saved defaults when passed.
+catppuccin, gruvbox, tokyonight — applied live), the default agent
+(swaps the live pane and future launches), and the `cpu/ram/net` resource
+bar. Changes persist to `~/.config/jaed/settings.json` immediately; `-a`
+and `--theme` flags override the saved defaults when passed.
 
 ## Bring your own agent
 
@@ -196,10 +202,12 @@ assets/jaed-tools/        sandboxed tool runtime: runner, loader, helper
 internal/agents/          BYO agent registry (pi, opencode, shell)
 internal/git/             repository state via the git CLI
 internal/pane/            raw-PTY terminal (spanreed + windrunner)
+internal/stats/           CPU/memory/network sampling (top+vm_stat+netstat / /proc)
 internal/theme/           semantic palette + everforest
 internal/tools/           .jaed discovery + local git exclude
 internal/workspace/       grid layout, focus graph, respawn, status bar,
-                          agent picker, git view, tools view, terminal tabs
+                          resource bar, agent picker, git view, tools view,
+                          terminal tabs
 ```
 
 Guests run with `TERM=xterm-256color` on raw PTYs and inherit your

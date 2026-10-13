@@ -295,8 +295,8 @@ func TestHidePanes(t *testing.T) {
 		t.Error("main should still render fullscreen")
 	}
 	main := a.rects[PaneMain]
-	if main.W != 120 || main.H != 39 {
-		t.Errorf("main should be fullscreen, have %+v", main)
+	if main.W != 120 || main.H != a.bodyHeight() {
+		t.Errorf("main should be fullscreen, have %+v (body %d)", main, a.bodyHeight())
 	}
 
 	// restore everything

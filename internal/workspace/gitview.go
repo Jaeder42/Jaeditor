@@ -105,7 +105,7 @@ func (g gitView) rows() []gitRow {
 // renderGit composes the fullscreen git view: file list left, diff right.
 func (a App) renderGit() string {
 	t := a.theme
-	contentW, contentH := a.width, a.height-statusRows
+	contentW, contentH := a.width, a.bodyHeight()
 	listW := clamp(contentW/3, 24, contentW-24)
 
 	// Left: the file list, bordered, with the branch as its header.

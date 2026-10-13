@@ -31,6 +31,7 @@ import (
 	"jaed/internal/agents"
 	"jaed/internal/pane"
 	"jaed/internal/settings"
+	"jaed/internal/stats"
 	"jaed/internal/theme"
 )
 
@@ -64,8 +65,13 @@ type App struct {
 	settingsOpen bool
 	settingsSel  int
 	cfg          settings.Settings
-	activeFile   string // live-link path (see link.go)
-	activeSeen   string // last title published to it
+	// Resource bar state (see statsview.go). The collector is shared by
+	// pointer across App copies; usage is the latest sample.
+	statsCollector *stats.Collector
+	usage          stats.Usage
+	statsOK        bool
+	activeFile     string // live-link path (see link.go)
+	activeSeen     string // last title published to it
 	// bufferQuery asks the editor pane for the active file; overridable
 	// in tests.
 	bufferQuery func() (string, error)
@@ -96,18 +102,22 @@ func New(panes []pane.Pane, specs []pane.Spec, cwd string, th theme.Theme, cfg s
 	app.bufferQuery = app.editorBufferTitle
 	app.activeFile = activeFilePath(cwd)
 	app.cfg = cfg
+	app.statsCollector = stats.New()
 	app.panes[PaneMain].Focus()
 	return app
 }
 
 func (a App) Init() tea.Cmd {
-	cmds := make([]tea.Cmd, 0, 2*(len(a.panes)+len(a.termTabs)))
+	cmds := make([]tea.Cmd, 0, 2*(len(a.panes)+len(a.termTabs))+1)
 	for i := range a.panes {
 		cmds = append(cmds, a.panes[i].Init(), a.panes[i].ExitCmd())
 	}
 	for i := range a.termTabs {
 		p := a.termTabs[i].pane
 		cmds = append(cmds, p.Init(), p.ExitCmd())
+	}
+	if a.cfg.Stats {
+		cmds = append(cmds, a.sampleStats())
 	}
 	return tea.Batch(cmds...)
 }
@@ -168,6 +178,19 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseMsg:
 		return a, a.mouse(msg)
+
+	case statsSampleMsg:
+		a.usage, a.statsOK = msg.usage, msg.ok
+		if a.cfg.Stats {
+			return a, statsTick()
+		}
+		return a, nil
+
+	case statsTickMsg:
+		if a.cfg.Stats {
+			return a, a.sampleStats()
+		}
+		return a, nil
 	}
 
 	// Everything else (FrameMsg, key passthrough) reaches every pane;
@@ -399,7 +422,7 @@ func (a *App) setFocus(i int) {
 // applyLayout re-splits the grid and resizes every live pane.
 func (a *App) applyLayout() tea.Cmd {
 	main, term, agent := a.layout.SplitVisible(
-		a.width, a.height-statusRows,
+		a.width, a.bodyHeight(),
 		!a.hidden[PaneTerm], !a.hidden[PaneAgent],
 	)
 	a.rects = []Rect{main, term, agent}
@@ -488,14 +511,14 @@ func (a *App) gitKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case 'd':
 		if msg.Mod == tea.ModCtrl {
-			a.git.scrollBy(diffPageSize(a.height), max(3, a.height-statusRows-4))
+			a.git.scrollBy(diffPageSize(a.bodyHeight()), max(3, a.bodyHeight()-4))
 		}
 	case 'u':
 		if msg.Mod == tea.ModCtrl {
 			a.git.scrollBy(-diffPageSize(a.height), max(3, a.height-statusRows-4))
 		}
 	case tea.KeyPgDown:
-		a.git.scrollBy(diffPageSize(a.height), max(3, a.height-statusRows-4))
+		a.git.scrollBy(diffPageSize(a.bodyHeight()), max(3, a.bodyHeight()-4))
 	case tea.KeyPgUp:
 		a.git.scrollBy(-diffPageSize(a.height), max(3, a.height-statusRows-4))
 	case 'Q', 'q':
@@ -518,8 +541,10 @@ func (a *App) gitKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 // diffPageSize is half the diff viewport, for ctrl+d/u and page keys.
-func diffPageSize(height int) int {
-	return max(3, (height-statusRows-4)/2)
+// diffPageSize is half the diff viewport for ctrl+d/u and the page keys,
+// computed from the body height (status and resource bars already removed).
+func diffPageSize(bodyHeight int) int {
+	return max(3, (bodyHeight-4)/2)
 }
 
 // pickerKey handles keys while the agent picker is open. The popup owns
@@ -715,7 +740,7 @@ func (a App) View() tea.View {
 	} else if a.toolsMode {
 		content = a.renderTools() + "\n" + a.statusBar()
 	} else {
-		rows := make([]string, a.height-statusRows)
+		rows := make([]string, a.bodyHeight())
 		for i := range a.panes {
 			a.blitPane(&rows, i)
 		}
@@ -725,6 +750,11 @@ func (a App) View() tea.View {
 			}
 		}
 		content = strings.Join(rows, "\n") + "\n" + a.statusBar()
+	}
+	// The resource bar sits above everything, including the git and tools
+	// views, so the reading is always in the same place.
+	if a.cfg.Stats {
+		content = a.statsBar() + "\n" + content
 	}
 	if a.settingsOpen {
 		content = overlayCenter(content, a.renderSettings(), a.width, a.height)
@@ -736,7 +766,7 @@ func (a App) View() tea.View {
 	if a.focus >= 0 {
 		if x, y, ok := a.panes[a.focus].Cursor(); ok {
 			r := a.rects[a.focus]
-			view.Cursor = tea.NewCursor(r.X+x+1, r.Y+y+1)
+			view.Cursor = tea.NewCursor(r.X+x+1, r.Y+y+1+a.topRows())
 		}
 	}
 	return view

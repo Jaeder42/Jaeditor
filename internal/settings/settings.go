@@ -12,11 +12,13 @@ import (
 type Settings struct {
 	Theme string `json:"theme"`
 	Agent string `json:"agent"`
+	// Stats shows the top CPU/memory resource bar.
+	Stats bool `json:"stats"`
 }
 
 // Default returns the built-in preferences.
 func Default() Settings {
-	return Settings{Theme: "everforest", Agent: "pi"}
+	return Settings{Theme: "everforest", Agent: "pi", Stats: true}
 }
 
 // path is the settings file: ~/.config/jaed/settings.json.
@@ -40,13 +42,22 @@ func Load() Settings {
 	if err != nil {
 		return s
 	}
-	var loaded Settings
+	var loaded struct {
+		Theme string `json:"theme"`
+		Agent string `json:"agent"`
+		// Stats is a pointer so an older settings file without the field
+		// keeps the default rather than reading as "off".
+		Stats *bool `json:"stats"`
+	}
 	if json.Unmarshal(data, &loaded) == nil {
 		if loaded.Theme != "" {
 			s.Theme = loaded.Theme
 		}
 		if loaded.Agent != "" {
 			s.Agent = loaded.Agent
+		}
+		if loaded.Stats != nil {
+			s.Stats = *loaded.Stats
 		}
 	}
 	return s

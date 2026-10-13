@@ -62,9 +62,10 @@ func TestSettingsPane(t *testing.T) {
 		t.Error("applied theme should be marked current")
 	}
 
-	// rows: [2..5]=themes, [7..9]=agents (opencode, pi, shell); six
-	// j presses from everforest land on shell
-	for range 6 {
+	// rows: [2..5]=themes, [7..9]=agents (opencode, pi, shell); five
+	// j presses from everforest land on shell (the cpu/ram toggle is the
+	// next selectable row after it)
+	for range 5 {
 		model, _ = a.Update(tea.KeyPressMsg{Code: 'j'})
 		a = model.(App)
 	}

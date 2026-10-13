@@ -71,6 +71,20 @@ func (a App) settingsRows() []settingsRow {
 			},
 		})
 	}
+	rows = append(rows, settingsRow{text: " interface ", header: true})
+	statsLabel := "  cpu/ram/net  off"
+	if a.cfg.Stats {
+		statsLabel = "● cpu/ram/net  on"
+	}
+	rows = append(rows, settingsRow{text: statsLabel, apply: func(app *App) tea.Cmd {
+		app.cfg.Stats = !app.cfg.Stats
+		_ = settings.Save(app.cfg)
+		cmd := app.applyLayout()
+		if app.cfg.Stats {
+			return tea.Batch(app.sampleStats(), cmd)
+		}
+		return cmd
+	}})
 	rows = append(rows, settingsRow{text: " j/k move · enter apply · esc close ", header: true})
 	return rows
 }

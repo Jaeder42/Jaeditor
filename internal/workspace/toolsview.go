@@ -104,14 +104,14 @@ func (a *App) toolsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case 'd':
 		if msg.Mod == tea.ModCtrl {
-			a.tools.scrollBy(diffPageSize(a.height), max(3, a.height-statusRows-4))
+			a.tools.scrollBy(diffPageSize(a.bodyHeight()), max(3, a.bodyHeight()-4))
 		}
 	case 'u':
 		if msg.Mod == tea.ModCtrl {
 			a.tools.scrollBy(-diffPageSize(a.height), max(3, a.height-statusRows-4))
 		}
 	case tea.KeyPgDown:
-		a.tools.scrollBy(diffPageSize(a.height), max(3, a.height-statusRows-4))
+		a.tools.scrollBy(diffPageSize(a.bodyHeight()), max(3, a.bodyHeight()-4))
 	case tea.KeyPgUp:
 		a.tools.scrollBy(-diffPageSize(a.height), max(3, a.height-statusRows-4))
 	case 'Q', 'q':
