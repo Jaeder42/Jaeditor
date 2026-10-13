@@ -19,6 +19,7 @@ import (
 	"jaed/internal/pane"
 	"jaed/internal/settings"
 	"jaed/internal/theme"
+	"jaed/internal/tools"
 	"jaed/internal/workspace"
 )
 
@@ -45,6 +46,12 @@ func main() {
 	if info, err := os.Stat(absDir); err != nil || !info.IsDir() {
 		fatalf("jaed: not a directory: %s", dir)
 	}
+
+	// Bootstrap the personal .jaed folder for agent-authored tools: it
+	// holds runnable scripts the agent can write and run from the chat,
+	// and is excluded from version control. Best-effort — jaed runs
+	// without it, just without the tools view's contents.
+	_ = tools.EnsureLayout(absDir)
 
 	// Persisted settings fill in for flags the user did not pass.
 	cfg := settings.Load()

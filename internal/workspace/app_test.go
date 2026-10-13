@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -583,6 +584,106 @@ func TestGitView(t *testing.T) {
 	if cmd == nil || cmd() != tea.Quit() {
 		t.Fatal("Q should quit from the git view")
 	}
+}
+
+// TestViewBeforeReady guards the pre-layout render: View must not touch
+// pane rectangles before the first WindowSizeMsg populates them.
+func TestViewBeforeReady(t *testing.T) {
+	a := newTestApp(t)
+	a.ready = false
+	a.rects = nil
+	if got := a.View().Content; !strings.Contains(stripANSI(got), "starting") {
+		t.Fatalf("pre-ready view should say starting, got %q", stripANSI(got))
+	}
+}
+
+// TestMouseModeAlwaysOn: jaed always takes mouse reporting so the host
+// terminal never converts the wheel into arrow keys. A wheel over a
+// non-tracking pane then scrolls that pane's own history.
+func TestMouseModeAlwaysOn(t *testing.T) {
+	a := newTestApp(t)
+	if a.View().MouseMode != tea.MouseModeCellMotion {
+		t.Fatal("jaed should always request mouse events")
+	}
+	// A wheel over a non-tracking pane routes to its own history: a
+	// scroll tick comes back (and never guest input).
+	_, cmd := a.Update(tea.MouseWheelMsg{
+		X: a.rects[PaneMain].X + 1, Y: a.rects[PaneMain].Y + 1, Button: tea.MouseWheelUp,
+	})
+	if cmd == nil {
+		t.Fatal("wheel over a non-tracking pane should schedule a scrollback scroll")
+	}
+}
+
+// TestMouseRouting: a wheel over a guest that enabled mouse tracking
+// arrives as an SGR mouse event (so opencode scrolls its own view instead
+// of walking prompt history).
+func TestMouseRouting(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	t.Cleanup(cancel)
+
+	cwd := filepath.Join(t.TempDir(), "chess")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(t.TempDir(), "in")
+
+	specs := testSpecs()
+	for i := range specs {
+		specs[i].Dir = cwd
+	}
+	// The agent enables mouse tracking, then records raw stdin to a log
+	// (raw mode, so bytes flush without a newline).
+	specs[PaneAgent] = pane.Spec{
+		Command: "/bin/sh",
+		Args: []string{"-c",
+			`printf '\x1b[?1000h\x1b[?1006h'; stty raw -echo; cat > "` + log + `"`},
+		Dir: cwd,
+	}
+
+	panes := make([]pane.Pane, len(specs))
+	for i, spec := range specs {
+		p, err := pane.Spawn(ctx, spec, 40, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		panes[i] = p
+		t.Cleanup(p.Close)
+	}
+	app := New(panes, specs, cwd, theme.Everforest, settings.Default())
+	model, cmd := app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	a := model.(App)
+	if cmd != nil {
+		cmd()
+	}
+
+	// Wait for the agent's mouse modes to reach the watcher.
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) && !a.panes[PaneAgent].MouseTracking() {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !a.panes[PaneAgent].MouseTracking() {
+		t.Fatal("agent pane never reported mouse tracking")
+	}
+	if a.View().MouseMode != tea.MouseModeCellMotion {
+		t.Fatal("mouse mode should be enabled when a visible guest wants the mouse")
+	}
+
+	// A wheel over the agent box is forwarded as SGR, pane-local coords.
+	r := a.rects[PaneAgent]
+	model, _ = a.Update(tea.MouseWheelMsg{X: r.X + 2, Y: r.Y + 3, Button: tea.MouseWheelUp})
+	a = model.(App)
+
+	want := []byte("\x1b[<64;2;3M")
+	deadline = time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if data, err := os.ReadFile(log); err == nil && bytes.Contains(data, want) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	data, _ := os.ReadFile(log)
+	t.Fatalf("agent never received the SGR wheel event %q; log was %q", want, data)
 }
 
 func TestGitViewNotARepo(t *testing.T) {

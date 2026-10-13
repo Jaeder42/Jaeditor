@@ -51,12 +51,14 @@ jaed --theme everforest ~/dev/chess
 | `s` | chrome | agent picker popup |
 | `S` | chrome | settings (theme, default agent) |
 | `g` | chrome | fullscreen git view (panes keep running) |
+| `T` | chrome | fullscreen tools view (agent scripts) |
 | `c` | chrome | push the editor's active file to the agent pane |
 | `H/J/K/L` | chrome | resize the grid (agent width / terminal height) |
 | `Q` | chrome | quit (always works; legacy terminals can't report `ctrl+shift+q`) |
 | `j/k` · enter · esc | picker | move · swap agent · close |
 | `j/k` · enter · esc | settings | move · apply (live + persisted) · close |
 | `j/k` · `ctrl+d/u` · `r` · `g`/`esc` | git | file · scroll diff · refresh · close |
+| `j/k` · `ctrl+d/u` · `r` · `T`/`esc` | tools | tool · scroll code · rescan · close |
 
 The git view shows changed files grouped **staged / unstaged /
 untracked**, the selected file's diff colored to the theme, and the
@@ -134,16 +136,53 @@ aider = aider --model sonnet
 
 They appear in the picker and in `-a`.
 
+## Agent tools
+
+jaed gives the agent a personal, sandboxed place to keep reusable
+JavaScript tools. On startup it creates `.jaed/` in the workspace —
+`tools/`, `skills/`, and a writable `tmp/` — and adds it to the
+repository's local `.git/info/exclude`, so it is never committed.
+
+The installed agent integration (see below) exposes three tools:
+`jaed_tools_list`, `jaed_tools_write`, and `jaed_tools_run`, plus
+`jaed_skills_read`/`jaed_skills_write` for longer reference material.
+Ask the agent for a task it might want to repeat and it can write a tool
+and run it from the chat.
+
+`ctrl+q` then `T` opens the tools view: the workspace's scripts on the
+left with their descriptions, the selected tool's source on the right.
+Read-only — the tools are for the agent to run.
+
+### The sandbox
+
+Tools are ESM files exporting `default async function run(input, jaed)`,
+run by Node under the permission model:
+
+- no network, no child processes, no worker threads;
+- read access to the workspace and the runtime only;
+- write access to `.jaed/tmp` only;
+- a 30-second timeout and a 256 MB heap cap;
+- imports restricted to `node:` builtins (minus the capability modules),
+  a small allowlist — `zod`, `yaml`, `date-fns`, `nanoid`, `marked`,
+  `lodash-es` — and the injected `jaed` helper.
+
+The runtime lives at `assets/jaed-tools/` and is installed to
+`~/.config/jaed/runtime/` by `install.sh`, which also `npm install`s the
+allowlist and copies the skill. Tools still work with only Node's
+builtins if npm is unavailable.
+
 ## Layout
 
 ```
 main.go                   entry: dir, --theme, -a agent, --editor
+assets/jaed-tools/        sandboxed tool runtime: runner, loader, helper
 internal/agents/          BYO agent registry (pi, opencode, shell)
 internal/git/             repository state via the git CLI
 internal/pane/            raw-PTY terminal (spanreed + windrunner)
 internal/theme/           semantic palette + everforest
+internal/tools/           .jaed discovery + local git exclude
 internal/workspace/       grid layout, focus graph, respawn, status bar,
-                          agent picker, git view
+                          agent picker, git view, tools view
 ```
 
 Guests run with `TERM=xterm-256color` on raw PTYs and inherit your

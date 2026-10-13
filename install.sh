@@ -21,6 +21,8 @@ if [ "${1:-}" = "--uninstall" ]; then
     else
         echo "nothing to remove: $BIN"
     fi
+    rm -rf "${HOME}/.config/jaed/runtime" "${HOME}/.config/opencode/skills/jaed-tools"
+    echo "removed the agent tools runtime and skill"
     echo "rc PATH lines can stay; they are harmless without the binary."
     exit 0
 fi
@@ -38,6 +40,33 @@ mkdir -p "$INSTALL_DIR"
 go build -o "${BIN}.tmp" .
 mv -f "${BIN}.tmp" "$BIN"
 echo "installed $BIN"
+
+# --- agent tools runtime ---------------------------------------------------
+# The sandboxed Node runtime the agent's tools run in, plus the skill that
+# documents the conventions. jaed works without it; only the agent's
+# jaed_tools_* tools need it.
+RUNTIME_DIR="${HOME}/.config/jaed/runtime"
+if [ -d "${REPO}/assets/jaed-tools" ]; then
+    mkdir -p "$RUNTIME_DIR"
+    cp "${REPO}"/assets/jaed-tools/* "$RUNTIME_DIR"/
+    if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
+        echo "installing the tool runtime packages…"
+        if ! (cd "$RUNTIME_DIR" && npm install --omit=dev --no-audit --no-fund --silent); then
+            echo "warning: npm install failed; tools will only have Node's builtins"
+        fi
+    else
+        echo "note: node/npm not found — install Node 22+ so the sandboxed tools can run"
+        echo "      tools will otherwise have only Node's builtins"
+    fi
+    echo "  installed the agent tools runtime in $RUNTIME_DIR"
+
+    # The skill, for opencode's on-demand skill system. pi gets the same
+    # text injected by its extension.
+    SKILL_DIR="${HOME}/.config/opencode/skills/jaed-tools"
+    mkdir -p "$SKILL_DIR"
+    cp "${REPO}/assets/jaed-tools/SKILL.md" "$SKILL_DIR/SKILL.md"
+    echo "  installed the jaed-tools skill for opencode"
+fi
 
 # --- PATH wiring -----------------------------------------------------------
 

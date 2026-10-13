@@ -53,6 +53,8 @@ type App struct {
 	pick         picker
 	gitMode      bool
 	git          gitView
+	toolsMode    bool
+	tools        toolsView
 	settingsOpen bool
 	settingsSel  int
 	cfg          settings.Settings
@@ -133,6 +135,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.gitMode {
 			return a.gitKey(msg)
 		}
+		if a.toolsMode {
+			return a.toolsKey(msg)
+		}
 		if a.settingsOpen {
 			return a.settingsKey(msg)
 		}
@@ -142,10 +147,16 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd, handled := a.key(msg); handled {
 			return a, cmd
 		}
+
+	case tea.MouseWheelMsg:
+		return a, a.mouseWheel(msg)
+
+	case tea.MouseMsg:
+		return a, a.mouse(msg)
 	}
 
-	// Everything else (FrameMsg, key passthrough, mouse) reaches every
-	// pane; spanreed filters by ID and focus.
+	// Everything else (FrameMsg, key passthrough) reaches every pane;
+	// spanreed filters by ID and focus.
 	return a, a.forward(msg)
 }
 
@@ -193,8 +204,18 @@ func (a *App) key(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 				return a.applyLayout(), true
 			}
 		case 't':
-			if msg.Mod == 0 {
+			switch msg.Mod {
+			case 0:
 				return a.togglePane(PaneTerm), true
+			case tea.ModShift:
+				a.openToolsView()
+				return nil, true
+			}
+		case 'T':
+			// legacy parsers report the shifted code directly
+			if msg.Mod&tea.ModCtrl == 0 {
+				a.openToolsView()
+				return nil, true
 			}
 		case 'a':
 			if msg.Mod == 0 {
@@ -530,6 +551,72 @@ func (a *App) forward(msg tea.Msg) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// mouseWheel routes a wheel event to the pane under the cursor: to the
+// guest as a mouse event when it enabled tracking (so full-screen TUIs
+// like opencode scroll their own view), otherwise to the pane's scrollback.
+func (a *App) mouseWheel(msg tea.MouseWheelMsg) tea.Cmd {
+	if a.gitMode || a.toolsMode || a.settingsOpen || a.pickerOpen {
+		return nil
+	}
+	m := msg.Mouse()
+	i := a.paneAt(m.X, m.Y)
+	if i < 0 {
+		return nil
+	}
+	if a.panes[i].MouseTracking() {
+		x, y := a.localCoords(i, m.X, m.Y)
+		_ = a.panes[i].Mouse(msg, x, y)
+		return nil
+	}
+	delta := 3
+	switch m.Button {
+	case tea.MouseWheelUp:
+	case tea.MouseWheelDown:
+		delta = -3
+	default:
+		return nil
+	}
+	return a.panes[i].QueueScroll(delta)
+}
+
+// mouse relays clicks, releases, and motion to the pane under the cursor,
+// but only when its guest enabled mouse tracking; other panes let the host
+// terminal handle selection.
+func (a *App) mouse(msg tea.MouseMsg) tea.Cmd {
+	if a.gitMode || a.toolsMode || a.settingsOpen || a.pickerOpen {
+		return nil
+	}
+	m := msg.Mouse()
+	i := a.paneAt(m.X, m.Y)
+	if i < 0 || !a.panes[i].MouseTracking() {
+		return nil
+	}
+	x, y := a.localCoords(i, m.X, m.Y)
+	_ = a.panes[i].Mouse(msg, x, y)
+	return nil
+}
+
+// paneAt returns the visible pane containing screen cell (x, y), or -1.
+func (a *App) paneAt(x, y int) int {
+	for i, r := range a.rects {
+		if a.hidden[i] || a.dead[i] || r.W < 1 || r.H < 1 {
+			continue
+		}
+		if x >= r.X && x < r.X+r.W && y >= r.Y && y < r.Y+r.H {
+			return i
+		}
+	}
+	return -1
+}
+
+// localCoords maps a screen cell to pane-local, zero-based guest
+// coordinates (the pane's border is one cell thick).
+func (a *App) localCoords(i, x, y int) (int, int) {
+	r := a.rects[i]
+	cols, rows := a.panes[i].Size()
+	return clamp(x-r.X-1, 0, max(0, cols-1)), clamp(y-r.Y-1, 0, max(0, rows-1))
+}
+
 func (a *App) closeAll() {
 	for i := range a.panes {
 		a.panes[i].Close()
@@ -543,10 +630,18 @@ func (a App) View() tea.View {
 		view.SetContent("jaed: starting…")
 		return view
 	}
+	// Always take mouse reporting. Otherwise the host terminal's
+	// alternate-scroll mode turns every wheel event into Up/Down arrow
+	// keys before jaed sees it — which walks prompt history and cursor
+	// position instead of scrolling. With reporting on, jaed routes the
+	// wheel to the pane under the cursor itself (see mouseWheel).
+	view.MouseMode = tea.MouseModeCellMotion
 
 	var content string
 	if a.gitMode {
 		content = a.renderGit() + "\n" + a.statusBar()
+	} else if a.toolsMode {
+		content = a.renderTools() + "\n" + a.statusBar()
 	} else {
 		rows := make([]string, a.height-statusRows)
 		for i := range a.panes {
@@ -634,6 +729,9 @@ func (a App) statusBar() string {
 	if a.gitMode {
 		left += dim.Render(" · git")
 	}
+	if a.toolsMode {
+		left += dim.Render(" · tools")
+	}
 
 	var panes strings.Builder
 	for i, p := range a.panes {
@@ -662,10 +760,12 @@ func (a App) statusBar() string {
 	switch {
 	case a.gitMode:
 		hint = dim.Render("j/k file · ctrl+d/u scroll · r refresh · g/esc close · Q quit")
+	case a.toolsMode:
+		hint = dim.Render("j/k tool · ctrl+d/u scroll · r rescan · T/esc close · Q quit")
 	case a.focus >= 0:
 		hint = dim.Render("ctrl+hjkl focus · ctrl+q chrome · ctrl+shift+q quit")
 	default:
-		hint = dim.Render("hjkl focus · t/a hide · s swap · g git · S settings · Q quit")
+		hint = dim.Render("hjkl focus · t/a hide · s swap · g git · T tools · S settings · Q quit")
 	}
 
 	visible := ansi.StringWidth(left) + ansi.StringWidth(panes.String()) + ansi.StringWidth(hint)
