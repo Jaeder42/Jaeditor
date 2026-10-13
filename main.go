@@ -17,6 +17,7 @@ import (
 
 	"jaed/internal/agents"
 	"jaed/internal/pane"
+	"jaed/internal/settings"
 	"jaed/internal/theme"
 	"jaed/internal/workspace"
 )
@@ -43,6 +44,17 @@ func main() {
 	}
 	if info, err := os.Stat(absDir); err != nil || !info.IsDir() {
 		fatalf("jaed: not a directory: %s", dir)
+	}
+
+	// Persisted settings fill in for flags the user did not pass.
+	cfg := settings.Load()
+	passed := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { passed[f.Name] = true })
+	if !passed["theme"] {
+		themeName = &cfg.Theme
+	}
+	if !passed["a"] {
+		agentName = &cfg.Agent
 	}
 
 	th, ok := theme.Get(*themeName)
@@ -86,7 +98,7 @@ func main() {
 		panes[i] = p
 	}
 
-	app := workspace.New(panes, specs, absDir, th)
+	app := workspace.New(panes, specs, absDir, th, cfg)
 	if _, err := tea.NewProgram(app).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "jaed:", err)
 		os.Exit(1)

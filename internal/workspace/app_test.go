@@ -13,6 +13,7 @@ import (
 
 	agents2 "jaed/internal/agents"
 	"jaed/internal/pane"
+	"jaed/internal/settings"
 	"jaed/internal/theme"
 )
 
@@ -52,7 +53,7 @@ func newTestApp(t *testing.T) App {
 		panes[i] = p
 		t.Cleanup(p.Close)
 	}
-	app := New(panes, specs, cwd, theme.Everforest)
+	app := New(panes, specs, cwd, theme.Everforest, settings.Default())
 	model, cmd := app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	a := model.(App)
 	if cmd != nil {
@@ -199,7 +200,7 @@ func TestRespawnAndDeath(t *testing.T) {
 	if err := os.MkdirAll(cwd, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	app := New(panes, specs, cwd, theme.Everforest)
+	app := New(panes, specs, cwd, theme.Everforest, settings.Default())
 	model, _ := app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	a := model.(App)
 
@@ -513,7 +514,7 @@ func TestGitView(t *testing.T) {
 		panes[i] = p
 		t.Cleanup(p.Close)
 	}
-	app := New(panes, specs, repo, theme.Everforest)
+	app := New(panes, specs, repo, theme.Everforest, settings.Default())
 	model, _ := app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	a := model.(App)
 

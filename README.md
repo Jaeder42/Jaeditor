@@ -49,11 +49,13 @@ jaed --theme everforest ~/dev/chess
 | `t` | chrome | hide/show the terminal pane (process keeps running) |
 | `a` | chrome | hide/show the agent pane (process keeps running) |
 | `s` | chrome | agent picker popup |
+| `S` | chrome | settings (theme, default agent) |
 | `g` | chrome | fullscreen git view (panes keep running) |
 | `c` | chrome | push the editor's active file to the agent pane |
 | `H/J/K/L` | chrome | resize the grid (agent width / terminal height) |
 | `Q` | chrome | quit (always works; legacy terminals can't report `ctrl+shift+q`) |
 | `j/k` · enter · esc | picker | move · swap agent · close |
+| `j/k` · enter · esc | settings | move · apply (live + persisted) · close |
 | `j/k` · `ctrl+d/u` · `r` · `g`/`esc` | git | file · scroll diff · refresh · close |
 
 The git view shows changed files grouped **staged / unstaged /
@@ -88,6 +90,16 @@ cp assets/jaed.ts ~/.pi/agent/extensions/jaed.ts
 pi announces `jaed link: editing <path>` when it starts inside a
 jaed workspace, and stays inert when run standalone.
 
+opencode gets the same awareness through its V2 plugin API
+(`assets/jaed-opencode.ts`, for opencode >= 2.0 — injects the active
+file as a live system line on every model call plus the same tool).
+Install (manual, one time):
+
+```sh
+mkdir -p ~/.config/opencode/plugins
+cp assets/jaed-opencode.ts ~/.config/opencode/plugins/jaed.ts
+```
+
 Hidden panes show as `◇` in the status bar. Hiding the focused pane
 releases focus to chrome mode; hidden panes keep running and re-layout
 when shown again. Hide both for a fullscreen editor; `t`/`a` bring the
@@ -100,6 +112,14 @@ instead of looping.
 The status bar shows each pane's live guest title (nvim names the file it
 edits; pi sets `π - workspace`). The agent picker swaps the agent pane's
 process live — `ctrl+q` `s` `j/k` `enter` — without leaving the session.
+
+## Settings
+
+`ctrl+q` then `S` opens the settings popup: theme (everforest,
+catppuccin, gruvbox, tokyonight — applied live) and the default agent
+(swaps the live pane and future launches). Changes persist to
+`~/.config/jaed/settings.json` immediately; `-a` and `--theme` flags
+override the saved defaults when passed.
 
 ## Bring your own agent
 

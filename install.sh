@@ -92,6 +92,9 @@ fi
 if [ -f "${REPO}/assets/jaed.ts" ] && ! [ -f "${HOME}/.pi/agent/extensions/jaed.ts" ]; then
     echo "optional pi live link: cp ${REPO}/assets/jaed.ts ~/.pi/agent/extensions/jaed.ts"
 fi
+if [ -f "${REPO}/assets/jaed-opencode.ts" ] && ! [ -f "${HOME}/.config/opencode/plugins/jaed.ts" ]; then
+    echo "optional opencode live link: cp ${REPO}/assets/jaed-opencode.ts ~/.config/opencode/plugins/jaed.ts"
+fi
 
 # Current shell already knows the dir? Then nothing to source.
 case ":${PATH}:" in

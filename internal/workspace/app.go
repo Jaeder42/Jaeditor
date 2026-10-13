@@ -26,6 +26,7 @@ import (
 
 	"jaed/internal/agents"
 	"jaed/internal/pane"
+	"jaed/internal/settings"
 	"jaed/internal/theme"
 )
 
@@ -37,23 +38,26 @@ const (
 
 // App is the workspace tea.Model.
 type App struct {
-	panes      []pane.Pane
-	specs      []pane.Spec // original spawn specs, for respawn
-	rects      []Rect
-	dead       []bool
-	hidden     []bool      // pane toggled away from the layout (process lives on)
-	spawnedAt  []time.Time // respawn time of each pane's current instance
-	layout     Layout
-	focus      int // pane index, or -1 for chrome mode
-	lastFocus  int
-	cwd        string // absolute workspace path
-	theme      theme.Theme
-	pickerOpen bool
-	pick       picker
-	gitMode    bool
-	git        gitView
-	activeFile string // live-link path (see link.go)
-	activeSeen string // last title published to it
+	panes        []pane.Pane
+	specs        []pane.Spec // original spawn specs, for respawn
+	rects        []Rect
+	dead         []bool
+	hidden       []bool      // pane toggled away from the layout (process lives on)
+	spawnedAt    []time.Time // respawn time of each pane's current instance
+	layout       Layout
+	focus        int // pane index, or -1 for chrome mode
+	lastFocus    int
+	cwd          string // absolute workspace path
+	theme        theme.Theme
+	pickerOpen   bool
+	pick         picker
+	gitMode      bool
+	git          gitView
+	settingsOpen bool
+	settingsSel  int
+	cfg          settings.Settings
+	activeFile   string // live-link path (see link.go)
+	activeSeen   string // last title published to it
 	// bufferQuery asks the editor pane for the active file; overridable
 	// in tests.
 	bufferQuery func() (string, error)
@@ -64,8 +68,8 @@ type App struct {
 
 // New builds the workspace around already-spawned panes, with the main
 // pane focused. specs must match panes one-to-one; cwd is the absolute
-// workspace path.
-func New(panes []pane.Pane, specs []pane.Spec, cwd string, th theme.Theme) App {
+// workspace path; cfg is the persisted user settings.
+func New(panes []pane.Pane, specs []pane.Spec, cwd string, th theme.Theme, cfg settings.Settings) App {
 	app := App{
 		panes:     append([]pane.Pane(nil), panes...), // own our arrays: respawn
 		specs:     append([]pane.Spec(nil), specs...), // must not alias the caller's
@@ -83,6 +87,7 @@ func New(panes []pane.Pane, specs []pane.Spec, cwd string, th theme.Theme) App {
 	}
 	app.bufferQuery = app.editorBufferTitle
 	app.activeFile = activeFilePath(cwd)
+	app.cfg = cfg
 	app.panes[PaneMain].Focus()
 	return app
 }
@@ -127,6 +132,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if a.gitMode {
 			return a.gitKey(msg)
+		}
+		if a.settingsOpen {
+			return a.settingsKey(msg)
 		}
 		if a.pickerOpen {
 			return a.pickerKey(msg)
@@ -192,8 +200,18 @@ func (a *App) key(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 			if msg.Mod == 0 {
 				return a.togglePane(PaneAgent), true
 			}
-		case 's':
-			if msg.Mod == 0 {
+		case 's', 'S':
+			// real input reports shift+s as code 's' with the shift
+			// modifier (legacy and kitty agree); code 'S' covers any
+			// parser that reports the shifted code directly.
+			switch {
+			case msg.Code == 'S' && msg.Mod&tea.ModCtrl == 0,
+				msg.Mod == tea.ModShift:
+				a.settingsOpen = true
+				a.settingsSel = 0
+				a.settingsMove(1) // land on the first selectable row
+				return nil, true
+			case msg.Mod == 0:
 				a.pickerOpen = true
 				a.pick = newPicker(a.specs[PaneAgent].Command)
 				return nil, true
@@ -398,10 +416,16 @@ func (a *App) gitKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		a.git.scrollBy(diffPageSize(a.height), max(3, a.height-statusRows-4))
 	case tea.KeyPgUp:
 		a.git.scrollBy(-diffPageSize(a.height), max(3, a.height-statusRows-4))
-	case 'Q':
-		if msg.Mod&tea.ModCtrl == 0 {
+	case 'Q', 'q':
+		// real input reports shift+q as code 'q' with the shift
+		// modifier; quit on either form, and close on ctrl+q.
+		switch {
+		case msg.Code == 'Q' && msg.Mod&tea.ModCtrl == 0,
+			msg.Mod == tea.ModShift:
 			a.closeAll()
 			return *a, tea.Quit
+		case msg.String() == "ctrl+q":
+			a.gitMode = false
 		}
 	default:
 		if msg.String() == "ctrl+q" {
@@ -535,7 +559,9 @@ func (a App) View() tea.View {
 		}
 		content = strings.Join(rows, "\n") + "\n" + a.statusBar()
 	}
-	if a.pickerOpen {
+	if a.settingsOpen {
+		content = overlayCenter(content, a.renderSettings(), a.width, a.height)
+	} else if a.pickerOpen {
 		content = overlayCenter(content, a.pick.render(a.theme), a.width, a.height)
 	}
 	view.SetContent(lipgloss.NewStyle().Background(lipgloss.Color(a.theme.Bg)).Render(content))
@@ -639,7 +665,7 @@ func (a App) statusBar() string {
 	case a.focus >= 0:
 		hint = dim.Render("ctrl+hjkl focus · ctrl+q chrome · ctrl+shift+q quit")
 	default:
-		hint = dim.Render("hjkl focus · t/a hide · s swap · g git · c send file · HJKL resize · Q quit")
+		hint = dim.Render("hjkl focus · t/a hide · s swap · g git · S settings · Q quit")
 	}
 
 	visible := ansi.StringWidth(left) + ansi.StringWidth(panes.String()) + ansi.StringWidth(hint)

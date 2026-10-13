@@ -14,6 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"jaed/internal/pane"
+	"jaed/internal/settings"
 	"jaed/internal/theme"
 )
 
@@ -41,7 +42,7 @@ func TestPushEditorContext(t *testing.T) {
 		panes[i] = p
 		t.Cleanup(p.Close)
 	}
-	app := New(panes, specs, cwd, theme.Everforest)
+	app := New(panes, specs, cwd, theme.Everforest, settings.Default())
 	model, _ := app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	a := model.(App)
 	a.bufferQuery = func() (string, error) { return "/tmp/chess/main.go", nil }
@@ -189,7 +190,7 @@ func TestSyncActiveFileLive(t *testing.T) {
 		panes[i] = p
 		t.Cleanup(p.Close)
 	}
-	app := New(panes, specs, cwd, theme.Everforest)
+	app := New(panes, specs, cwd, theme.Everforest, settings.Default())
 
 	waitTitle := func(want string) {
 		t.Helper()

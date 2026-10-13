@@ -26,7 +26,10 @@ type Theme struct {
 }
 
 var builtin = map[string]Theme{
+	Catppuccin.Name: Catppuccin,
 	Everforest.Name: Everforest,
+	Gruvbox.Name:    Gruvbox,
+	Tokyonight.Name: Tokyonight,
 }
 
 // Get returns a built-in theme by name (case-insensitive).
