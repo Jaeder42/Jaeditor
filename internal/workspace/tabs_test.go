@@ -1,6 +1,10 @@
 package workspace
 
 import (
+	"bytes"
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +13,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"jaed/internal/pane"
+	"jaed/internal/settings"
+	"jaed/internal/theme"
 )
 
 // marker builds a shell spec that prints text and lingers, like testSpecs.
@@ -135,31 +141,143 @@ func TestTabChordsIgnoreOtherPanes(t *testing.T) {
 	a := newTestApp(t)
 	a.waitView(t, "MAIN-MARK")
 
-	// ctrl+t opens a tab from anywhere, including the editor: jaed consumes
-	// it before the guest can.
 	if a.focus != PaneMain {
 		t.Fatalf("expected the editor focused, focus=%d", a.focus)
 	}
 	a.specs[PaneTerm] = markerSpec("TAB2-MARK")
+
+	// ctrl+t outside the terminal is the guest's chord (nvim jumps tags
+	// with it): no tab opens, and focus does not move.
 	model, cmd := a.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
 	a = model.(App)
 	if cmd != nil {
 		cmd()
 	}
+	if n := a.termTabCount(); n != 1 {
+		t.Fatalf("ctrl+t outside the terminal should not open a tab, have %d", n)
+	}
+	if a.focus != PaneMain {
+		t.Errorf("ctrl+t outside the terminal should not steal focus, focus=%d", a.focus)
+	}
+
+	// Close and switch stay scoped too: the editor keeps its own ctrl+w
+	// (and ctrl+pgup/pgdn).
+	model, cmd = a.Update(tea.KeyPressMsg{Code: 'w', Mod: tea.ModCtrl})
+	a = model.(App)
+	if cmd != nil {
+		cmd()
+	}
+	if n := a.termTabCount(); n != 1 {
+		t.Errorf("ctrl+w outside the terminal should not close a tab, have %d", n)
+	}
+
+	// From the terminal the chords work: open a tab, then close it.
+	a.setFocus(PaneTerm)
+	model, cmd = a.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	a = model.(App)
+	if cmd != nil {
+		cmd()
+	}
 	if n := a.termTabCount(); n != 2 {
-		t.Fatalf("ctrl+t from the editor should open a tab, have %d", n)
+		t.Fatalf("ctrl+t from the terminal should open a tab, have %d", n)
+	}
+	model, cmd = a.Update(tea.KeyPressMsg{Code: 'w', Mod: tea.ModCtrl})
+	a = model.(App)
+	if cmd != nil {
+		cmd()
+	}
+	if n := a.termTabCount(); n != 1 {
+		t.Fatalf("ctrl+w from the terminal should close the tab, have %d", n)
+	}
+}
+
+// TestCtrlTScopedToTerminal: scoping must release the chord, not swallow
+// it. With the editor focused, ctrl+t reaches the editor's stdin as the
+// raw byte 0x14; from chrome mode, which has no guest, it still opens a
+// tab — like its sibling chords ctrl+w and ctrl+pgup/pgdn.
+func TestCtrlTScopedToTerminal(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	t.Cleanup(cancel)
+
+	cwd := filepath.Join(t.TempDir(), "chess")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(t.TempDir(), "in")
+
+	specs := testSpecs()
+	for i := range specs {
+		specs[i].Dir = cwd
+	}
+	// The editor records raw stdin (raw mode, so bytes flush without a
+	// newline), so the test can see the chord arrive. RDY marks the
+	// moment stdin is live.
+	specs[PaneMain] = pane.Spec{
+		Command: "/bin/sh",
+		Args:    []string{"-c", `stty raw -echo; printf 'RDY'; cat > "` + log + `"`},
+		Dir:     cwd,
+	}
+
+	panes := make([]pane.Pane, len(specs))
+	for i, spec := range specs {
+		p, err := pane.Spawn(ctx, spec, 40, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		panes[i] = p
+		t.Cleanup(p.Close)
+	}
+	app := New(panes, specs, cwd, theme.Everforest, settings.Default())
+	model, cmd := app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	a := model.(App)
+	if cmd != nil {
+		cmd()
+	}
+	if a.focus != PaneMain {
+		t.Fatalf("the editor should start focused, focus=%d", a.focus)
+	}
+
+	a.waitView(t, "RDY")
+
+	// Focused on the editor: no tab opens, and the raw byte arrives
+	// (the write rides the returned cmd, as in the real event loop).
+	model, cmd = a.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	a = model.(App)
+	if cmd != nil {
+		cmd()
+	}
+	if n := a.termTabCount(); n != 1 {
+		t.Fatalf("ctrl+t outside the terminal should not open a tab, have %d", n)
+	}
+	want := []byte{0x14} // raw ctrl+t
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if data, err := os.ReadFile(log); err == nil && bytes.Contains(data, want) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	data, _ := os.ReadFile(log)
+	if !bytes.Contains(data, want) {
+		t.Fatalf("the editor never received ctrl+t; log was %q", data)
+	}
+
+	// From chrome mode — no guest owns keys — ctrl+t still opens a tab.
+	model, _ = a.Update(tea.KeyPressMsg{Code: 'q', Mod: tea.ModCtrl})
+	a = model.(App)
+	if a.focus >= 0 {
+		t.Fatal("ctrl+q should release focus to chrome mode")
+	}
+	model, cmd = a.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	a = model.(App)
+	if cmd != nil {
+		cmd()
+	}
+	if n := a.termTabCount(); n != 2 {
+		t.Fatalf("ctrl+t from chrome mode should open a tab, have %d", n)
 	}
 	if a.focus != PaneTerm {
 		t.Errorf("the new tab should take focus, focus=%d", a.focus)
-	}
-
-	// But close and switch stay scoped to the terminal, so the editor keeps
-	// its own ctrl+w (and ctrl+pgup/pgdn). Move focus back to the editor.
-	a.setFocus(PaneMain)
-	model, _ = a.Update(tea.KeyPressMsg{Code: 'w', Mod: tea.ModCtrl})
-	a = model.(App)
-	if n := a.termTabCount(); n != 2 {
-		t.Errorf("ctrl+w outside the terminal should not close a tab, have %d", n)
 	}
 }
 

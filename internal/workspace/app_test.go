@@ -615,6 +615,26 @@ func TestMouseModeAlwaysOn(t *testing.T) {
 	}
 }
 
+// TestMouseResourceBarShift: mouse events arrive in zero-based screen
+// rows, but the grid starts below the resource bar. The hit test must
+// shift by topRows or everything lands one line low — a wheel on the
+// resource bar itself, or on the gap row between panes, must hit no pane.
+func TestMouseResourceBarShift(t *testing.T) {
+	a := newTestApp(t)
+	if a.topRows() != 1 {
+		t.Fatal("test expects the resource bar on (settings default)")
+	}
+	_, cmd := a.Update(tea.MouseWheelMsg{X: 1, Y: 0, Button: tea.MouseWheelUp})
+	if cmd != nil {
+		t.Error("wheel on the resource bar should hit no pane")
+	}
+	r := a.rects[PaneMain]
+	_, cmd = a.Update(tea.MouseWheelMsg{X: 1, Y: r.Y + r.H + a.topRows(), Button: tea.MouseWheelUp})
+	if cmd != nil {
+		t.Error("wheel on the gap row below main should hit no pane")
+	}
+}
+
 // TestMouseRouting: a wheel over a guest that enabled mouse tracking
 // arrives as an SGR mouse event (so opencode scrolls its own view instead
 // of walking prompt history).
@@ -670,20 +690,88 @@ func TestMouseRouting(t *testing.T) {
 	}
 
 	// A wheel over the agent box is forwarded as SGR, pane-local coords.
+	// Y is a zero-based screen row: with the resource bar on, screen row
+	// r.Y+3 is grid row r.Y+2, guest row 1 (SGR rows are one-based).
 	r := a.rects[PaneAgent]
 	model, _ = a.Update(tea.MouseWheelMsg{X: r.X + 2, Y: r.Y + 3, Button: tea.MouseWheelUp})
 	a = model.(App)
 
-	want := []byte("\x1b[<64;2;3M")
+	wantWheel := []byte("\x1b[<64;2;2M")
 	deadline = time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
-		if data, err := os.ReadFile(log); err == nil && bytes.Contains(data, want) {
-			return
+		if data, err := os.ReadFile(log); err == nil && bytes.Contains(data, wantWheel) {
+			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	data, _ := os.ReadFile(log)
-	t.Fatalf("agent never received the SGR wheel event %q; log was %q", want, data)
+	if !bytes.Contains(data, wantWheel) {
+		t.Fatalf("agent never received the SGR wheel event %q; log was %q", wantWheel, data)
+	}
+
+	// A click on a tracking pane both focuses it and reaches it as SGR.
+	model, _ = a.Update(tea.MouseClickMsg{X: r.X + 2, Y: r.Y + 3, Button: tea.MouseLeft})
+	a = model.(App)
+	if a.focus != PaneAgent {
+		t.Fatalf("a click on a tracking pane should focus it, focus=%d", a.focus)
+	}
+	wantClick := []byte("\x1b[<0;2;2M")
+	deadline = time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if data, err := os.ReadFile(log); err == nil && bytes.Contains(data, wantClick) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	data, _ = os.ReadFile(log)
+	t.Fatalf("agent never received the SGR click %q; log was %q", wantClick, data)
+}
+
+// TestClickFocusesPane: a click on a pane focuses it — clicks only, not
+// motion — from any focus state including chrome mode, while clicks on
+// no-pane rows (gaps, bars) change nothing.
+func TestClickFocusesPane(t *testing.T) {
+	a := newTestApp(t)
+	a.waitView(t, "MAIN-MARK", "TERM-MARK", "AGENT-MARK")
+	if a.focus != PaneMain {
+		t.Fatalf("the editor should start focused, focus=%d", a.focus)
+	}
+
+	// Click the terminal box; screen row = grid row + resource bar.
+	r := a.rects[PaneTerm]
+	model, _ := a.Update(tea.MouseClickMsg{X: r.X + 2, Y: r.Y + 3 + a.topRows(), Button: tea.MouseLeft})
+	a = model.(App)
+	if a.focus != PaneTerm {
+		t.Fatalf("a click on the terminal should focus it, focus=%d", a.focus)
+	}
+	if !a.panes[PaneTerm].Focused() || a.panes[PaneMain].Focused() {
+		t.Error("focus should move to the clicked pane only")
+	}
+
+	// Motion does not steal focus, even crossing into another pane.
+	ra := a.rects[PaneAgent]
+	model, _ = a.Update(tea.MouseMotionMsg{X: ra.X + 2, Y: ra.Y + 3 + a.topRows(), Button: tea.MouseLeft})
+	a = model.(App)
+	if a.focus != PaneTerm {
+		t.Fatalf("motion should not change focus, focus=%d", a.focus)
+	}
+
+	// From chrome mode a click focuses the clicked pane.
+	a.setFocus(-1)
+	model, _ = a.Update(tea.MouseClickMsg{X: ra.X + 2, Y: ra.Y + 3 + a.topRows(), Button: tea.MouseLeft})
+	a = model.(App)
+	if a.focus != PaneAgent {
+		t.Fatalf("a click from chrome mode should focus the agent, focus=%d", a.focus)
+	}
+
+	// A click on the gap row below main changes nothing.
+	a.setFocus(PaneMain)
+	r = a.rects[PaneMain]
+	model, _ = a.Update(tea.MouseClickMsg{X: 1, Y: r.Y + r.H + a.topRows(), Button: tea.MouseLeft})
+	a = model.(App)
+	if a.focus != PaneMain {
+		t.Fatalf("a click on a gap row should not change focus, focus=%d", a.focus)
+	}
 }
 
 func TestGitViewNotARepo(t *testing.T) {

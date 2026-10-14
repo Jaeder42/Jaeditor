@@ -9,12 +9,14 @@
 //	│  terminal    │          │
 //	└──────────────┴──────────┘
 //
-// Keys: ctrl+hjkl switches pane focus from anywhere. ctrl+q releases the
-// focused pane to chrome mode; in chrome mode hjkl focuses, HJKL resizes
-// the grid, and ctrl+q quits. Everything else reaches the focused pane.
+// Keys: ctrl+hjkl switches pane focus from anywhere, and a mouse click
+// on a pane focuses it. ctrl+q releases the focused pane to chrome mode;
+// in chrome mode hjkl focuses, HJKL resizes the grid, and ctrl+q quits.
+// Everything else reaches the focused pane.
 //
 // The terminal pane is tabbed: ctrl+t opens a shell tab, ctrl+pgup/pgdn
-// (or ctrl+shift+[/]) switches, and ctrl+w closes. See tabs.go.
+// (or ctrl+shift+[/]) switches, and ctrl+w closes — while the terminal is
+// focused, or from chrome mode, which has no guest. See tabs.go.
 package workspace
 
 import (
@@ -212,19 +214,16 @@ func (a *App) key(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		}
 	}
 
-	// ctrl+t opens a terminal tab from anywhere: a new shell is harmless to
-	// every guest, and it is how a user reaches the tabs without focusing
-	// the terminal first.
-	if msg.Mod&tea.ModCtrl != 0 && msg.Code == 't' {
-		return a.newTermTab(), true
-	}
-
-	// Switching and closing are consumed only while the terminal is focused
-	// (or from chrome mode, which has no guest), so they never shadow the
-	// editor's own chords — nvim owns ctrl+w and ctrl+pgup/pgdn. ctrl+w and
-	// ctrl+shift+w both close; ctrl+shift+[ and ] switch alongside pgup/pgdn.
+	// Tab chords — open, switch, close — are consumed only while the
+	// terminal is focused (or from chrome mode, which has no guest), so
+	// they never shadow other panes' chords: the editor owns ctrl+t (nvim
+	// jumps tags with it), ctrl+w, and ctrl+pgup/pgdn. ctrl+w and
+	// ctrl+shift+w both close; ctrl+shift+[ and ] switch alongside
+	// pgup/pgdn.
 	if (a.focus == PaneTerm || a.focus < 0) && msg.Mod&tea.ModCtrl != 0 {
 		switch msg.Code {
+		case 't':
+			return a.newTermTab(), true
 		case 'w':
 			return a.closeTermTab(), true
 		case tea.KeyPgUp:
@@ -653,6 +652,10 @@ func (a *App) mouseWheel(msg tea.MouseWheelMsg) tea.Cmd {
 		return nil
 	}
 	m := msg.Mouse()
+	// Mouse events arrive in zero-based screen rows, but the grid starts
+	// below the resource bar (topRows): shift into grid rows before the
+	// hit test, or every event lands one line low.
+	m.Y -= a.topRows()
 	i := a.paneAt(m.X, m.Y)
 	if i < 0 {
 		return nil
@@ -673,16 +676,28 @@ func (a *App) mouseWheel(msg tea.MouseWheelMsg) tea.Cmd {
 	return a.panes[i].QueueScroll(delta)
 }
 
-// mouse relays clicks, releases, and motion to the pane under the cursor,
-// but only when its guest enabled mouse tracking; other panes let the host
-// terminal handle selection.
+// mouse focuses the pane under the cursor on a click — tmux-style, so
+// the grid can be driven without chords — and relays clicks, releases,
+// and motion to that pane when its guest enabled mouse tracking; other
+// panes let the host terminal handle selection.
 func (a *App) mouse(msg tea.MouseMsg) tea.Cmd {
 	if a.gitMode || a.toolsMode || a.settingsOpen || a.pickerOpen {
 		return nil
 	}
 	m := msg.Mouse()
+	// Screen row → grid row: the resource bar sits above the grid, so
+	// raw screen coordinates would hit one line below the cursor.
+	m.Y -= a.topRows()
 	i := a.paneAt(m.X, m.Y)
-	if i < 0 || !a.panes[i].MouseTracking() {
+	if i < 0 {
+		return nil
+	}
+	// A click — any button press — moves focus; motion and releases do
+	// not, so dragging across panes never steals focus mid-selection.
+	if _, ok := msg.(tea.MouseClickMsg); ok && a.focus != i {
+		a.setFocus(i)
+	}
+	if !a.panes[i].MouseTracking() {
 		return nil
 	}
 	x, y := a.localCoords(i, m.X, m.Y)
@@ -690,7 +705,9 @@ func (a *App) mouse(msg tea.MouseMsg) tea.Cmd {
 	return nil
 }
 
-// paneAt returns the visible pane containing screen cell (x, y), or -1.
+// paneAt returns the visible pane containing grid cell (x, y), or -1.
+// Coordinates are content rows — zero is the first grid row, below the
+// resource bar; the mouse handlers shift screen rows on the way in.
 func (a *App) paneAt(x, y int) int {
 	for i, r := range a.rects {
 		if a.hidden[i] || a.dead[i] || r.W < 1 || r.H < 1 {
@@ -703,7 +720,7 @@ func (a *App) paneAt(x, y int) int {
 	return -1
 }
 
-// localCoords maps a screen cell to pane-local, zero-based guest
+// localCoords maps a grid cell to pane-local, zero-based guest
 // coordinates (the pane's border is one cell thick).
 func (a *App) localCoords(i, x, y int) (int, int) {
 	r := a.rects[i]
@@ -872,7 +889,7 @@ func (a App) statusBar() string {
 	case a.focus == PaneTerm:
 		hint = dim.Render("ctrl+t tab · ctrl+pgup/pgdn switch · ctrl+w close · ctrl+q chrome")
 	case a.focus >= 0:
-		hint = dim.Render("ctrl+t tab · ctrl+hjkl focus · ctrl+q chrome")
+		hint = dim.Render("ctrl+hjkl focus · ctrl+q chrome")
 	default:
 		hint = dim.Render("hjkl focus · t/a hide · s swap · g git · T tools · S settings · Q quit")
 	}

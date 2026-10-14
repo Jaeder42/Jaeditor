@@ -48,12 +48,13 @@ jaed --theme everforest ~/dev/chess
 | Key | Mode | Effect |
 |---|---|---|
 | `ctrl+h/j/k/l` | anywhere | switch pane focus |
+| mouse click | pane | focus the pane under the cursor (also reaches guests that track the mouse) |
 | `ctrl+shift+q` | anywhere | quit |
 | anything else (focused pane) | pane | goes to the pane's process |
 | `ctrl+q` | pane | release the pane → chrome mode |
-| `ctrl+t` | anywhere | new shell tab |
-| `ctrl+pgup/pgdn` · `ctrl+shift+[`/`]` | terminal | previous · next tab |
-| `ctrl+w` · `ctrl+shift+w` | terminal | close the tab (hides the pane if it was the last) |
+| `ctrl+t` | terminal / chrome | new shell tab |
+| `ctrl+pgup/pgdn` · `ctrl+shift+[`/`]` | terminal / chrome | previous · next tab |
+| `ctrl+w` · `ctrl+shift+w` | terminal / chrome | close the tab (hides the pane if it was the last) |
 | `h/j/k/l` or arrows | chrome | focus panes |
 | `t` | chrome | hide/show the terminal pane (process keeps running) |
 | `a` | chrome | hide/show the agent pane (process keeps running) |
@@ -76,16 +77,16 @@ branch in its header. `Q` quits from there too.
 ### Terminal tabs
 
 The terminal pane is tabbed. `ctrl+t` opens a shell tab in the
-workspace root next to the active one — from any pane — and
-`ctrl+pgup`/`ctrl+pgdn` (or `ctrl+shift+[`/`]`) switch, and `ctrl+w`
-closes. Multiple tabs share the pane's box; only the active one is
-drawn, and the others keep running in the background. When more than one
-tab is open the pane's top border becomes a tab strip and the status bar
-shows `n/total`. Switching and closing are consumed only while the
-terminal is focused, so the editor keeps its own `ctrl+w`. Closing the
-last tab hides the terminal pane (`t` shows it again with a fresh
-shell); a tab that dies within 3s of opening is crashing and is marked
-`✕`, like any other pane.
+workspace root next to the active one, `ctrl+pgup`/`ctrl+pgdn` (or
+`ctrl+shift+[`/`]`) switch, and `ctrl+w` closes. Multiple tabs share the
+pane's box; only the active one is drawn, and the others keep running in
+the background. When more than one tab is open the pane's top border
+becomes a tab strip and the status bar shows `n/total`. Opening,
+switching, and closing are consumed only while the terminal is focused
+(or from chrome mode, which has no guest), so the editor keeps its own
+chords — nvim jumps tags with `ctrl+t`. Closing the last tab hides the
+terminal pane (`t` shows it again with a fresh shell); a tab that dies
+within 3s of opening is crashing and is marked `✕`, like any other pane.
 
 ## Editor ↔ agent
 
