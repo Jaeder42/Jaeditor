@@ -13,7 +13,9 @@ import "time"
 // Usage is one resource sample. CPUPercent is machine-wide utilisation across
 // all cores (0-100), matching what top(1) reports. Memory is in bytes.
 // NetRx/NetTx are network throughput in bytes per second, valid only when
-// NetOK is set (the first sample has no delta to report).
+// NetOK is set (the first sample has no delta to report). Battery is valid
+// only when BatteryOK is set — a machine without one (a desktop) leaves it
+// unset.
 type Usage struct {
 	CPUPercent float64
 	MemUsed    uint64
@@ -21,6 +23,10 @@ type Usage struct {
 	NetRx      uint64
 	NetTx      uint64
 	NetOK      bool
+
+	BatteryPercent  int
+	BatteryCharging bool
+	BatteryOK       bool
 }
 
 // Collector samples machine usage.

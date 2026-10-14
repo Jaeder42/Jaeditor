@@ -72,3 +72,32 @@ en0        1500  192.168.1.5   192.168.1.5        1000     -    1048576     2000
 		t.Errorf("tx = %d, want 2048", tx)
 	}
 }
+
+func TestParsePmsetBatt(t *testing.T) {
+	out := `Now drawing from 'Battery Power'
+ -InternalBattery-0 (id=12345678)	82%; discharging; 3:21 remaining present: true
+`
+	pct, charging, ok := parsePmsetBatt(out)
+	if !ok {
+		t.Fatal("expected pmset -g batt to parse")
+	}
+	if pct != 82 {
+		t.Errorf("percent = %d, want 82", pct)
+	}
+	if charging {
+		t.Error("a discharging battery is not charging")
+	}
+
+	ac := `Now drawing from 'AC Power'
+ -InternalBattery-0 (id=12345678)	100%; charged; 0:00 remaining present: true
+`
+	if pct, charging, ok = parsePmsetBatt(ac); !ok || pct != 100 || !charging {
+		t.Errorf("ac = %d/%v/%v, want 100/true/true", pct, charging, ok)
+	}
+}
+
+func TestParsePmsetBattNoBattery(t *testing.T) {
+	if _, _, ok := parsePmsetBatt("Now drawing from 'AC Power'\n"); ok {
+		t.Error("a desktop with no battery should not report one")
+	}
+}

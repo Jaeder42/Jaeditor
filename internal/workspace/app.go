@@ -849,6 +849,17 @@ func (a App) blitPane(rows *[]string, i int) {
 	}
 }
 
+// bgPad renders n spaces with the bar's surface background. Both bars are
+// built from segments whose Render ends in a reset, so a raw space between
+// them falls back to the terminal's default color; padding has to paint the
+// surface itself.
+func bgPad(surface string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return lipgloss.NewStyle().Background(lipgloss.Color(surface)).Render(strings.Repeat(" ", n))
+}
+
 // statusBar is one line: jaed, the workspace, the theme, pane states, and
 // the key hint.
 func (a App) statusBar() string {
@@ -876,15 +887,15 @@ func (a App) statusBar() string {
 		case a.dead[i]:
 			panes.WriteString(lipgloss.NewStyle().
 				Background(surface).Foreground(lipgloss.Color(t.Error)).Render("✕"))
-			panes.WriteString(" " + dim.Render(paneLabel(p)))
+			panes.WriteString(dim.Render(" " + paneLabel(p)))
 		case a.hidden[i]:
 			panes.WriteString(lipgloss.NewStyle().
 				Background(surface).Foreground(lipgloss.Color(t.Subtext)).Render("◇"))
-			panes.WriteString(" " + dim.Render(paneLabel(p)))
+			panes.WriteString(dim.Render(" " + paneLabel(p)))
 		case a.focus == i:
 			panes.WriteString(lipgloss.NewStyle().
 				Background(surface).Foreground(lipgloss.Color(t.Success)).Render("●"))
-			panes.WriteString(" " + fg.Render(paneLabel(p)))
+			panes.WriteString(fg.Render(" " + paneLabel(p)))
 		default:
 			panes.WriteString(dim.Render("○ " + paneLabel(p)))
 		}
@@ -918,7 +929,7 @@ func (a App) statusBar() string {
 			panes.WriteString(tab.Render(" " + strconv.Itoa(a.termPos+1) + "/" + strconv.Itoa(a.termTabCount())))
 		}
 		if i < len(a.panes)-1 {
-			panes.WriteString("  ")
+			panes.WriteString(bgPad(t.Surface, 2))
 		}
 	}
 
@@ -941,7 +952,7 @@ func (a App) statusBar() string {
 	if gap < 1 {
 		gap = 1
 	}
-	content := left + "  " + panes.String() + strings.Repeat(" ", gap) + hint + " "
+	content := left + bgPad(t.Surface, 2) + panes.String() + bgPad(t.Surface, gap) + hint + bgPad(t.Surface, 1)
 	return lipgloss.NewStyle().Background(surface).Width(a.width).Render(content)
 }
 

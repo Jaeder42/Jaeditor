@@ -32,7 +32,48 @@ func (c *Collector) Sample() (Usage, error) {
 	if rx, tx, ok := darwinNet(); ok {
 		u.NetRx, u.NetTx, u.NetOK = c.netRates(rx, tx, time.Now())
 	}
+
+	// Best-effort: a desktop has no battery and pmset still succeeds with no
+	// percentage line, so a parse failure just leaves the field unset.
+	if pct, charging, ok := darwinBattery(); ok {
+		u.BatteryPercent, u.BatteryCharging, u.BatteryOK = pct, charging, true
+	}
 	return u, nil
+}
+
+// darwinBattery reads the battery charge and whether it is on the charger
+// from pmset(1).
+func darwinBattery() (percent int, charging, ok bool) {
+	out, err := exec.Command("pmset", "-g", "batt").Output()
+	if err != nil {
+		return 0, false, false
+	}
+	return parsePmsetBatt(string(out))
+}
+
+// parsePmsetBatt extracts the level and charging state from `pmset -g batt`.
+// The battery line looks like " -InternalBattery-0 (id=…)	82%; charging;
+// 0:30 remaining present: true"; the "Now drawing from …" header carries no
+// percentage and is skipped.
+func parsePmsetBatt(out string) (percent int, charging, ok bool) {
+	for _, line := range strings.Split(out, "\n") {
+		pct := strings.IndexByte(line, '%')
+		if pct < 0 {
+			continue
+		}
+		start := pct
+		for start > 0 && line[start-1] >= '0' && line[start-1] <= '9' {
+			start--
+		}
+		n, err := strconv.Atoi(line[start:pct])
+		if err != nil {
+			continue
+		}
+		// Plugged in reads "charging", "charged", or "AC attached"; only
+		// "discharging" means the battery is running the machine.
+		return n, !strings.Contains(line, "discharging"), true
+	}
+	return 0, false, false
 }
 
 // darwinCPU runs top twice (the first sample is the average since boot, the

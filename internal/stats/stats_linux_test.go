@@ -62,3 +62,19 @@ func TestParseProcNetDev(t *testing.T) {
 		t.Errorf("tx = %d, want %d", tx, 2048+1024)
 	}
 }
+
+func TestParseBatterySysfs(t *testing.T) {
+	pct, charging, ok := parseBatterySysfs("82\n", "Discharging\n")
+	if !ok || pct != 82 || charging {
+		t.Errorf("discharging = %d/%v/%v, want 82/false/true", pct, charging, ok)
+	}
+	if pct, charging, ok = parseBatterySysfs("100\n", "Full\n"); !ok || pct != 100 || !charging {
+		t.Errorf("full = %d/%v/%v, want 100/true/true", pct, charging, ok)
+	}
+	if pct, charging, ok = parseBatterySysfs("55\n", "Not charging\n"); !ok || pct != 55 || !charging {
+		t.Errorf("plugged not charging = %d/%v/%v, want 55/true/true", pct, charging, ok)
+	}
+	if _, _, ok = parseBatterySysfs("garbage\n", "Discharging\n"); ok {
+		t.Error("an unparseable capacity should not report a battery")
+	}
+}

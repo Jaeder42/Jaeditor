@@ -7,7 +7,7 @@ embedded terminal panes in one Bubble Tea TUI. The host terminal (Ghostty)
 does the rendering; `jaed` is just text.
 
 ```
- sys cpu 12%  ·  ram 5.1G/8.0G  ·  net ↓1.2M/s ↑300K/s
+ sys cpu 12%  ·  ram 5.1G/8.0G  ·  net ↓1.2M/s ↑300K/s              20:30  ·  bat 82%
 ┌──────────────────┬───────────┐
 │  nvim             │  agent    │
 │                   │  (pi)     │
@@ -18,9 +18,11 @@ does the rendering; `jaed` is just text.
 ```
 
 The `sys` line is the resource bar: whole-machine CPU, memory, and
-network throughput, on by default and toggled from settings (`ctrl+q`
-`S` → `cpu/ram/net`). It samples every 3s (macOS via `top`/`vm_stat`/
-`netstat`, Linux via `/proc`).
+network throughput on the left, the clock and battery on the right. It is
+on by default and toggled from settings (`ctrl+q` `S` → `cpu/ram/net`). It
+samples every 3s (macOS via `top`/`vm_stat`/`netstat`/`pmset`, Linux via
+`/proc` and `/sys`); the battery reads in the warn color when low and off
+the charger, with an `ac` tag while plugged in.
 
 ## Install
 

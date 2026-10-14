@@ -5,6 +5,7 @@ package stats
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -36,7 +37,44 @@ func (c *Collector) Sample() (Usage, error) {
 	if rx, tx, ok := readNetDev(); ok {
 		u.NetRx, u.NetTx, u.NetOK = c.netRates(rx, tx, time.Now())
 	}
+
+	// Best-effort: a desktop has no /sys/class/power_supply battery.
+	if pct, charging, ok := readBatterySysfs(); ok {
+		u.BatteryPercent, u.BatteryCharging, u.BatteryOK = pct, charging, true
+	}
 	return u, nil
+}
+
+// readBatterySysfs returns the first battery's charge and whether it is on
+// the charger, from /sys/class/power_supply.
+func readBatterySysfs() (percent int, charging, ok bool) {
+	dirs, err := filepath.Glob("/sys/class/power_supply/BAT*")
+	if err != nil {
+		return 0, false, false
+	}
+	for _, dir := range dirs {
+		capacity, err := os.ReadFile(filepath.Join(dir, "capacity"))
+		if err != nil {
+			continue
+		}
+		status, _ := os.ReadFile(filepath.Join(dir, "status"))
+		if pct, chg, ok := parseBatterySysfs(string(capacity), string(status)); ok {
+			return pct, chg, true
+		}
+	}
+	return 0, false, false
+}
+
+// parseBatterySysfs reads the percent and charging flag from a battery's
+// capacity and status files. Only "Discharging" means it runs the machine;
+// "Charging", "Full", and "Not charging" all mean it is plugged in.
+func parseBatterySysfs(capacity, status string) (percent int, charging, ok bool) {
+	n, err := strconv.Atoi(strings.TrimSpace(capacity))
+	if err != nil || n < 0 || n > 100 {
+		return 0, false, false
+	}
+	charging = !strings.EqualFold(strings.TrimSpace(status), "Discharging")
+	return n, charging, true
 }
 
 // readProcStat returns the idle (idle+iowait) and total tick counts from the

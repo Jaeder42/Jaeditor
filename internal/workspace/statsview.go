@@ -61,12 +61,19 @@ func (a App) bodyHeight() int {
 	return max(0, a.height-statusRows-a.topRows())
 }
 
-// statsBar renders the resource bar as one full-width line.
+// batteryLowPercent is the charge at or below which the battery reads in the
+// warn color (only while discharging).
+const batteryLowPercent = 20
+
+// statsBar renders the resource bar as one full-width line: machine resources
+// on the left, the clock and battery on the right, both the same height.
 func (a App) statsBar() string {
 	t := a.theme
 	surface := lipgloss.Color(t.Surface)
-	value := lipgloss.NewStyle().Background(surface).Foreground(lipgloss.Color(t.Fg))
-	dim := lipgloss.NewStyle().Background(surface).Foreground(lipgloss.Color(t.Dim))
+	base := lipgloss.NewStyle().Background(surface)
+	value := base.Foreground(lipgloss.Color(t.Fg))
+	dim := base.Foreground(lipgloss.Color(t.Dim))
+	warn := base.Foreground(lipgloss.Color(t.Warn))
 
 	var cpu, ram, net string
 	if a.statsOK {
@@ -82,11 +89,35 @@ func (a App) statsBar() string {
 		net = dim.Render("net —")
 	}
 	sep := dim.Render("  ·  ")
-	content := dim.Render(" sys ") + cpu + sep + ram + sep + net
-	if w := ansi.StringWidth(content); w < a.width {
-		content += strings.Repeat(" ", a.width-w)
+	left := dim.Render(" sys ") + cpu + sep + ram + sep + net
+
+	// The right cluster: the clock, then the battery — the level in the warn
+	// color when it is low and off the charger, tagged "ac" while charging. A
+	// desktop with no battery shows the clock alone.
+	right := value.Render(time.Now().Format("15:04"))
+	if a.statsOK && a.usage.BatteryOK {
+		bat := value
+		if !a.usage.BatteryCharging && a.usage.BatteryPercent <= batteryLowPercent {
+			bat = warn
+		}
+		label := fmt.Sprintf("bat %d%%", a.usage.BatteryPercent)
+		if a.usage.BatteryCharging {
+			label += " ac"
+		}
+		right += sep + bat.Render(label)
 	}
-	return lipgloss.NewStyle().Background(surface).Width(a.width).Render(content)
+
+	// Each segment's Render ends in a reset, so the gap and any trailing
+	// padding must be re-backgrounded explicitly or the surface drops out
+	// from under the empty space.
+	content := left
+	if gap := a.width - ansi.StringWidth(left) - ansi.StringWidth(right); gap >= 1 {
+		content += base.Render(strings.Repeat(" ", gap)) + right
+	}
+	if w := ansi.StringWidth(content); w < a.width {
+		content += base.Render(strings.Repeat(" ", a.width-w))
+	}
+	return base.Width(a.width).Render(content)
 }
 
 // fmtBytes renders a byte count as gibibytes with one decimal, e.g. 5.1G.

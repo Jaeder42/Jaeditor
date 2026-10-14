@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -20,7 +21,8 @@ func TestStatsBar(t *testing.T) {
 	}
 
 	a.usage = stats.Usage{CPUPercent: 12.6, MemUsed: 5 << 30, MemTotal: 8 << 30,
-		NetRx: 1<<20 + 200<<10, NetTx: 300 << 10, NetOK: true}
+		NetRx: 1<<20 + 200<<10, NetTx: 300 << 10, NetOK: true,
+		BatteryPercent: 82, BatteryOK: true}
 	a.statsOK = true
 	bar := stripANSI(a.statsBar())
 	if !strings.Contains(bar, "cpu 13%") {
@@ -32,8 +34,27 @@ func TestStatsBar(t *testing.T) {
 	if !strings.Contains(bar, "net ↓1.2M/s ↑300K/s") {
 		t.Errorf("bar should format network rates: %q", bar)
 	}
+	if !strings.Contains(bar, "bat 82%") {
+		t.Errorf("bar should show the battery: %q", bar)
+	}
+	if !clockRe.MatchString(bar) {
+		t.Errorf("bar should show a clock: %q", bar)
+	}
 	if !strings.Contains(stripANSI(a.View().Content), "cpu 13%") {
 		t.Error("the view should draw the resource bar")
+	}
+
+	// A charging battery is tagged and never in the warn color; a desktop
+	// with no battery still shows the clock.
+	a.usage.BatteryCharging = true
+	if got := stripANSI(a.statsBar()); !strings.Contains(got, "bat 82% ac") {
+		t.Errorf("a charging battery should be tagged: %q", got)
+	}
+	a.usage.BatteryOK = false
+	if got := stripANSI(a.statsBar()); strings.Contains(got, "bat ") {
+		t.Errorf("no battery should leave the segment off: %q", got)
+	} else if !clockRe.MatchString(got) {
+		t.Errorf("the clock should survive a missing battery: %q", got)
 	}
 
 	// Before the first sample the values are placeholders, and the network
@@ -48,6 +69,9 @@ func TestStatsBar(t *testing.T) {
 		t.Error("a sample without a network delta should still show a placeholder")
 	}
 }
+
+// clockRe matches the HH:MM clock at the right of the resource bar.
+var clockRe = regexp.MustCompile(`\b\d{2}:\d{2}\b`)
 
 func TestStatsToggle(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
