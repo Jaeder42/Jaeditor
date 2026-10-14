@@ -69,12 +69,25 @@ jaed --theme everforest ~/dev/chess
 | `Q` | chrome | quit (always works; legacy terminals can't report `ctrl+shift+q`) |
 | `j/k` · enter · esc | picker | move · swap agent · close |
 | `j/k` · enter · esc | settings | move · apply (live + persisted) · close |
-| `j/k` · `ctrl+d/u` · `r` · `g`/`esc` | git | file · scroll diff · refresh · close |
+| `j/k` · `[`/`]` · `ctrl+d/u` · `r` · `g`/`esc` | git | file · hunk · scroll diff · refresh · close |
+| `s`/`u`/`x` · `S`/`U`/`X` | git | stage/unstage/revert **hunk** · the same for the whole **file** |
 | `j/k` · `ctrl+d/u` · `r` · `T`/`esc` | tools | tool · scroll code · rescan · close |
 
 The git view shows changed files grouped **staged / unstaged /
-untracked**, the selected file's diff colored to the theme, and the
-branch in its header. `Q` quits from there too.
+untracked**, with the selected file's diff as an inline view: the whole
+diff scrolls continuously (`ctrl+d/u`, PgUp/PgDn, or the mouse wheel), and
+the hunk at the top of the viewport becomes active, so its actions follow
+the scroll. `[`/`]` jump hunk to hunk. Each hunk's header bar shows its
+actions inline — `s` stage, `u` unstage, `x` revert — while `S`/`U`/`X`
+act on the whole file. Every action reloads the status and keeps the
+selection. `Q` quits from there too.
+
+In both the git and tools views, **drag with the mouse to highlight text**;
+releasing copies it to the system clipboard (`pbcopy` on macOS,
+`wl-copy`/`xclip`/`xsel` on Linux) and the footer confirms it. A drag stays
+within the pane it starts in — the list or the diff/code view — so it never
+picks up the neighbouring pane or the box borders. jaed keeps mouse
+reporting on, so this stands in for the terminal's own selection.
 
 ### Terminal tabs
 

@@ -65,6 +65,7 @@ type App struct {
 	git          gitView
 	toolsMode    bool
 	tools        toolsView
+	sel          selection // mouse text selection in an overlay view
 	settingsOpen bool
 	settingsSel  int
 	cfg          settings.Settings
@@ -497,6 +498,7 @@ func (a *App) respawn(i int) tea.Cmd {
 // openGitView enters the fullscreen git mode and loads repository state.
 func (a *App) openGitView() {
 	a.setFocus(-1)
+	a.sel.clear()
 	a.gitMode = true
 	a.git.reload(a.cwd)
 }
@@ -518,18 +520,50 @@ func (a *App) gitKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if msg.Mod == 0 {
 			a.git.reload(a.cwd)
 		}
+	case '[':
+		if msg.Mod == 0 {
+			a.gitMoveHunk(-1)
+		}
+	case ']':
+		if msg.Mod == 0 {
+			a.gitMoveHunk(1)
+		}
+	case 's', 'S':
+		// real input reports shift+s as code 's' with the shift modifier;
+		// code 'S' covers parsers that report the shifted code directly.
+		switch {
+		case msg.Code == 'S' && msg.Mod&tea.ModCtrl == 0,
+			msg.Mod == tea.ModShift:
+			a.gitStageFile()
+		case msg.Mod == 0:
+			a.gitStageHunk()
+		}
+	case 'u', 'U':
+		switch {
+		case msg.Mod == tea.ModCtrl:
+			a.git.scrollBy(-diffPageSize(a.panelBody()), a.panelBody())
+		case msg.Code == 'U' && msg.Mod&tea.ModCtrl == 0,
+			msg.Mod == tea.ModShift:
+			a.gitUnstageFile()
+		case msg.Mod == 0:
+			a.gitUnstageHunk()
+		}
+	case 'x', 'X':
+		switch {
+		case msg.Code == 'X' && msg.Mod&tea.ModCtrl == 0,
+			msg.Mod == tea.ModShift:
+			a.gitRevertFile()
+		case msg.Mod == 0:
+			a.gitRevertHunk()
+		}
 	case 'd':
 		if msg.Mod == tea.ModCtrl {
-			a.git.scrollBy(diffPageSize(a.bodyHeight()), max(3, a.bodyHeight()-4))
-		}
-	case 'u':
-		if msg.Mod == tea.ModCtrl {
-			a.git.scrollBy(-diffPageSize(a.height), max(3, a.height-statusRows-4))
+			a.git.scrollBy(diffPageSize(a.panelBody()), a.panelBody())
 		}
 	case tea.KeyPgDown:
-		a.git.scrollBy(diffPageSize(a.bodyHeight()), max(3, a.bodyHeight()-4))
+		a.git.scrollBy(diffPageSize(a.panelBody()), a.panelBody())
 	case tea.KeyPgUp:
-		a.git.scrollBy(-diffPageSize(a.height), max(3, a.height-statusRows-4))
+		a.git.scrollBy(-diffPageSize(a.panelBody()), a.panelBody())
 	case 'Q', 'q':
 		// real input reports shift+q as code 'q' with the shift
 		// modifier; quit on either form, and close on ctrl+q.
@@ -658,11 +692,38 @@ func (a *App) forward(msg tea.Msg) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// wheelDelta turns a wheel direction into a scrollBy delta of three lines:
+// positive downward, matching the overlay views' scroll convention.
+func wheelDelta(b tea.MouseButton) int {
+	switch b {
+	case tea.MouseWheelUp:
+		return -3
+	case tea.MouseWheelDown:
+		return 3
+	default:
+		return 0
+	}
+}
+
 // mouseWheel routes a wheel event to the pane under the cursor: to the
 // guest as a mouse event when it enabled tracking (so full-screen TUIs
 // like opencode scroll their own view), otherwise to the pane's scrollback.
 func (a *App) mouseWheel(msg tea.MouseWheelMsg) tea.Cmd {
-	if a.gitMode || a.toolsMode || a.settingsOpen || a.pickerOpen {
+	// In the overlays the wheel scrolls the diff/code view. scrollBy's delta is
+	// positive downward, so a wheel-up (toward earlier lines) is negative.
+	if a.gitMode {
+		if delta := wheelDelta(msg.Mouse().Button); delta != 0 {
+			a.git.scrollBy(delta, a.panelBody())
+		}
+		return nil
+	}
+	if a.toolsMode {
+		if delta := wheelDelta(msg.Mouse().Button); delta != 0 {
+			a.tools.scrollBy(delta, a.panelBody())
+		}
+		return nil
+	}
+	if a.settingsOpen || a.pickerOpen {
 		return nil
 	}
 	m := msg.Mouse()
@@ -695,7 +756,11 @@ func (a *App) mouseWheel(msg tea.MouseWheelMsg) tea.Cmd {
 // and motion to that pane when its guest enabled mouse tracking; other
 // panes let the host terminal handle selection.
 func (a *App) mouse(msg tea.MouseMsg) tea.Cmd {
-	if a.gitMode || a.toolsMode || a.settingsOpen || a.pickerOpen {
+	if a.gitMode || a.toolsMode {
+		a.selectMouse(msg)
+		return nil
+	}
+	if a.settingsOpen || a.pickerOpen {
 		return nil
 	}
 	m := msg.Mouse()
@@ -767,9 +832,9 @@ func (a App) View() tea.View {
 
 	var content string
 	if a.gitMode {
-		content = a.renderGit() + "\n" + a.statusBar()
+		content = a.withSelection(a.renderGit()) + "\n" + a.statusBar()
 	} else if a.toolsMode {
-		content = a.renderTools() + "\n" + a.statusBar()
+		content = a.withSelection(a.renderTools()) + "\n" + a.statusBar()
 	} else {
 		rows := make([]string, a.bodyHeight())
 		for i := range a.panes {
@@ -936,7 +1001,7 @@ func (a App) statusBar() string {
 	var hint string
 	switch {
 	case a.gitMode:
-		hint = dim.Render("j/k file · ctrl+d/u scroll · r refresh · g/esc close · Q quit")
+		hint = dim.Render(a.gitHint())
 	case a.toolsMode:
 		hint = dim.Render("j/k tool · ctrl+d/u scroll · r rescan · T/esc close · Q quit")
 	case a.focus == PaneTerm:
@@ -947,12 +1012,17 @@ func (a App) statusBar() string {
 		hint = dim.Render("hjkl focus · t/a hide · s swap · g git · T tools · S settings · Q quit")
 	}
 
-	visible := ansi.StringWidth(left) + ansi.StringWidth(panes.String()) + ansi.StringWidth(hint)
-	gap := a.width - visible - 6
+	// The hint yields to the fixed content: shrink it rather than let the
+	// whole line overflow and wrap to a second screen row.
+	panesStr := panes.String()
+	if room := a.width - ansi.StringWidth(left) - ansi.StringWidth(panesStr) - 7; room >= 1 && ansi.StringWidth(hint) > room {
+		hint = ansi.Truncate(hint, room, "…")
+	}
+	gap := a.width - ansi.StringWidth(left) - ansi.StringWidth(panesStr) - ansi.StringWidth(hint) - 6
 	if gap < 1 {
 		gap = 1
 	}
-	content := left + bgPad(t.Surface, 2) + panes.String() + bgPad(t.Surface, gap) + hint + bgPad(t.Surface, 1)
+	content := left + bgPad(t.Surface, 2) + panesStr + bgPad(t.Surface, gap) + hint + bgPad(t.Surface, 1)
 	return lipgloss.NewStyle().Background(surface).Width(a.width).Render(content)
 }
 

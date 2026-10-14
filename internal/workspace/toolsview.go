@@ -21,6 +21,14 @@ type toolsView struct {
 	err      string // why the tools folder could not be read, if it could not
 	selected int
 	scroll   int
+
+	notice    string // transient result of the last action
+	noticeErr bool
+}
+
+// setNotice records the outcome of an action for the code view's footer.
+func (v *toolsView) setNotice(msg string, isErr bool) {
+	v.notice, v.noticeErr = " "+msg+" ", isErr
 }
 
 // reload re-reads the tools folder.
@@ -74,6 +82,7 @@ func (v toolsView) selectedLines() []string {
 // openToolsView enters the fullscreen tools mode and scans the folder.
 func (a *App) openToolsView() {
 	a.setFocus(-1)
+	a.sel.clear()
 	a.toolsMode = true
 	a.tools.reload(a.cwd)
 }
@@ -104,16 +113,16 @@ func (a *App) toolsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case 'd':
 		if msg.Mod == tea.ModCtrl {
-			a.tools.scrollBy(diffPageSize(a.bodyHeight()), max(3, a.bodyHeight()-4))
+			a.tools.scrollBy(diffPageSize(a.panelBody()), a.panelBody())
 		}
 	case 'u':
 		if msg.Mod == tea.ModCtrl {
-			a.tools.scrollBy(-diffPageSize(a.height), max(3, a.height-statusRows-4))
+			a.tools.scrollBy(-diffPageSize(a.panelBody()), a.panelBody())
 		}
 	case tea.KeyPgDown:
-		a.tools.scrollBy(diffPageSize(a.bodyHeight()), max(3, a.bodyHeight()-4))
+		a.tools.scrollBy(diffPageSize(a.panelBody()), a.panelBody())
 	case tea.KeyPgUp:
-		a.tools.scrollBy(-diffPageSize(a.height), max(3, a.height-statusRows-4))
+		a.tools.scrollBy(-diffPageSize(a.panelBody()), a.panelBody())
 	case 'Q', 'q':
 		switch {
 		case msg.Code == 'Q' && msg.Mod&tea.ModCtrl == 0,
@@ -131,11 +140,17 @@ func (a *App) toolsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return *a, nil
 }
 
+// toolsListWidth is the tool list's column width in the tools view, shared
+// with the selection's pane geometry so they agree.
+func (a App) toolsListWidth() int {
+	return clamp(a.width/3, 28, a.width-24)
+}
+
 // renderTools composes the fullscreen tools view: list left, code right.
 func (a App) renderTools() string {
 	t := a.theme
-	contentW, contentH := a.width, a.height-statusRows
-	listW := clamp(contentW/3, 28, contentW-24)
+	contentW, contentH := a.width, a.bodyHeight()
+	listW := a.toolsListWidth()
 
 	listBox := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -144,7 +159,7 @@ func (a App) renderTools() string {
 	codeBox := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(t.Accent)).
-		Render(a.toolsCodeContent(listW+1, contentW-listW-1, contentH-2))
+		Render(a.toolsCodeContent(listW+1, contentW-listW-2, contentH-2))
 
 	rows := make([]string, contentH)
 	listLines := strings.Split(listBox, "\n")
@@ -212,13 +227,17 @@ func (a App) toolsListContent(w, h int) string {
 	for len(lines) < h {
 		lines = append(lines, "")
 	}
+	for i, line := range lines[:h] {
+		lines[i] = padToWidth(line, w, base)
+	}
 	return strings.Join(lines[:h], "\n")
 }
 
 // toolsCodeContent renders the code box's inner content, with line numbers.
 func (a App) toolsCodeContent(x, w, h int) string {
 	t := a.theme
-	dim := lipgloss.NewStyle().Foreground(lipgloss.Color(t.Dim))
+	surface := lipgloss.Color(t.Surface)
+	dim := lipgloss.NewStyle().Background(surface).Foreground(lipgloss.Color(t.Dim))
 
 	title := " code "
 	if a.tools.err == "" && len(a.tools.entries) > 0 {
@@ -229,10 +248,15 @@ func (a App) toolsCodeContent(x, w, h int) string {
 	}
 	lines := []string{dim.Render(title)}
 
+	// Reserve the last row for a notice, or the whole box for the code.
+	body := h - 1
+	if a.tools.notice != "" {
+		body = max(0, h-2)
+	}
+
 	src := a.tools.selectedLines()
 	if len(src) > 0 {
-		viewH := max(0, h-1)
-		end := min(a.tools.scroll+viewH, len(src))
+		end := min(a.tools.scroll+body, len(src))
 		numW := len(strconv.Itoa(len(src)))
 		for i := a.tools.scroll; i < end; i++ {
 			num := dim.Render(fmt.Sprintf(" %*d ", numW, i+1))
@@ -243,8 +267,19 @@ func (a App) toolsCodeContent(x, w, h int) string {
 			lines = append(lines, line)
 		}
 	}
+	if a.tools.notice != "" {
+		style := dim
+		if a.tools.noticeErr {
+			style = lipgloss.NewStyle().Background(surface).Foreground(lipgloss.Color(t.Error))
+		}
+		lines = lines[:min(len(lines), h-1)]
+		lines = append(lines, style.Render(a.tools.notice))
+	}
 	for len(lines) < h {
 		lines = append(lines, "")
+	}
+	for i, line := range lines[:h] {
+		lines[i] = padToWidth(line, w, dim)
 	}
 	return strings.Join(lines[:h], "\n")
 }
@@ -273,10 +308,11 @@ var codeKeywords = map[string]bool{
 // keywords accent, everything else foreground. Purely cosmetic.
 func (a App) codeLine(line string) string {
 	t := a.theme
-	fg := lipgloss.NewStyle().Foreground(lipgloss.Color(t.Fg))
-	dim := lipgloss.NewStyle().Foreground(lipgloss.Color(t.Dim))
-	kw := lipgloss.NewStyle().Foreground(lipgloss.Color(t.Accent))
-	str := lipgloss.NewStyle().Foreground(lipgloss.Color(t.Success))
+	bg := lipgloss.Color(t.Surface)
+	fg := lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color(t.Fg))
+	dim := lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color(t.Dim))
+	kw := lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color(t.Accent))
+	str := lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color(t.Success))
 
 	var out strings.Builder
 	var plain strings.Builder

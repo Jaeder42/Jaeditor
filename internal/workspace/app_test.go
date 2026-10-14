@@ -13,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	agents2 "jaed/internal/agents"
+	"jaed/internal/git"
 	"jaed/internal/pane"
 	"jaed/internal/settings"
 	"jaed/internal/theme"
@@ -790,5 +791,130 @@ func TestGitViewNotARepo(t *testing.T) {
 	a = model.(App)
 	if a.gitMode {
 		t.Error("esc should close even outside a repository")
+	}
+}
+
+// twoHunkRepo builds a repo with one file changed at its first and last lines,
+// so its diff has two hunks.
+func twoHunkRepo(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "chess")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@example.com",
+			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@example.com")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-q", "-b", "main")
+	var base strings.Builder
+	for i := 1; i <= 20; i++ {
+		base.WriteString(string(rune('a'+i-1)) + "\n")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte(base.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "-q", "-m", "init")
+	lines := strings.Split(strings.TrimSuffix(base.String(), "\n"), "\n")
+	lines[0], lines[19] = "A", "Z"
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestGitViewHunkActions(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+
+	repo := twoHunkRepo(t)
+	specs := testSpecs()
+	for i := range specs {
+		specs[i].Dir = repo
+	}
+	panes := make([]pane.Pane, len(specs))
+	for i, spec := range specs {
+		p, err := pane.Spawn(ctx, spec, 40, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		panes[i] = p
+		t.Cleanup(p.Close)
+	}
+	app := New(panes, specs, repo, theme.Everforest, settings.Default())
+	model, _ := app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	a := model.(App)
+
+	// chrome mode, then 'g' opens the git view on the two-hunk file
+	model, _ = a.Update(tea.KeyPressMsg{Code: 'q', Mod: tea.ModCtrl})
+	a = model.(App)
+	model, _ = a.Update(tea.KeyPressMsg{Code: 'g'})
+	a = model.(App)
+	if view := stripANSI(a.View().Content); !strings.Contains(view, "hunk 1/2") {
+		t.Fatalf("view should start on hunk 1/2:\n%s", view)
+	}
+
+	// ] moves to the second hunk
+	model, _ = a.Update(tea.KeyPressMsg{Code: ']'})
+	a = model.(App)
+	if view := stripANSI(a.View().Content); !strings.Contains(view, "hunk 2/2") {
+		t.Fatalf("] should move to hunk 2/2:\n%s", view)
+	}
+
+	// s stages only the current hunk
+	model, _ = a.Update(tea.KeyPressMsg{Code: 's'})
+	a = model.(App)
+	if view := stripANSI(a.View().Content); !strings.Contains(view, "staged hunk 2") {
+		t.Errorf("staging should report it:\n%s", view)
+	}
+	cmd := func(args ...string) string {
+		c := exec.Command("git", args...)
+		c.Dir = repo
+		b, _ := c.Output()
+		return string(b)
+	}
+	if staged := cmd("diff", "--cached", "--no-color"); !strings.Contains(staged, "+Z") || strings.Contains(staged, "+A") {
+		t.Errorf("only the second hunk should be staged, cached diff:\n%s", staged)
+	}
+
+	// S stages the whole file, sweeping up the remaining first hunk
+	model, _ = a.Update(tea.KeyPressMsg{Code: 'S'})
+	a = model.(App)
+	if staged := cmd("diff", "--cached", "--no-color"); !strings.Contains(staged, "+A") || !strings.Contains(staged, "+Z") {
+		t.Errorf("S should stage the whole file, cached diff:\n%s", staged)
+	}
+	if rest := cmd("diff", "--no-color"); rest != "" {
+		t.Errorf("nothing should remain unstaged, got:\n%s", rest)
+	}
+}
+
+func TestGitViewHunkNavBounds(t *testing.T) {
+	a := newTestApp(t)
+	a.gitMode = true
+	a.git.entries = []git.Entry{{Section: git.Unstaged, Path: "x", Code: "M"}}
+	a.git.hunks = []git.HunkSpan{{Start: 0, End: 1}, {Start: 2, End: 3}}
+	a.git.hunk = 0
+
+	model, _ := a.Update(tea.KeyPressMsg{Code: '['})
+	a = model.(App)
+	if a.git.hunk != 0 {
+		t.Errorf("left at the first hunk should stay, got %d", a.git.hunk)
+	}
+	model, _ = a.Update(tea.KeyPressMsg{Code: ']'})
+	a = model.(App)
+	if a.git.hunk != 1 {
+		t.Errorf("] should select the second hunk, got %d", a.git.hunk)
+	}
+	model, _ = a.Update(tea.KeyPressMsg{Code: ']'})
+	a = model.(App)
+	if a.git.hunk != 1 {
+		t.Errorf("right at the last hunk should stay, got %d", a.git.hunk)
 	}
 }
