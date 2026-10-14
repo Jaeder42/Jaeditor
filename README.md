@@ -116,9 +116,20 @@ cp assets/jaed.ts ~/.pi/agent/extensions/jaed.ts
 pi announces `jaed link: editing <path>` when it starts inside a
 jaed workspace, and stays inert when run standalone.
 
+Both plugins also publish the agent's session state — the model in use,
+whether it is working or retrying, the tool currently running, and (for
+pi) how full the context window is — to
+`$TMPDIR/jaed-state-<hash-of-workspace>`. jaed's status bar shows it as
+`π · <model> · <tool>` while it works (the activity in the success
+color, `running` while it thinks, `retrying` while it backs off) and
+`<n>%` for context use, so the agent can be monitored without focusing
+its pane. Swapping the agent clears the report; agents without a plugin
+simply show nothing.
+
 opencode gets the same awareness through its V2 plugin API
 (`assets/jaed-opencode.ts`, for opencode >= 2.0 — injects the active
-file as a live system line on every model call plus the same tool).
+file as a live system line on every model call plus the same tool, and
+maps opencode's `session.status` stream onto the state channel).
 Install (manual, one time):
 
 ```sh
@@ -141,11 +152,18 @@ process live — `ctrl+q` `s` `j/k` `enter` — without leaving the session.
 
 ## Settings
 
-`ctrl+q` then `S` opens the settings popup: theme (everforest,
-catppuccin, gruvbox, tokyonight — applied live), the default agent
-(swaps the live pane and future launches), and the `cpu/ram/net` resource
-bar. Changes persist to `~/.config/jaed/settings.json` immediately; `-a`
-and `--theme` flags override the saved defaults when passed.
+`ctrl+q` then `S` opens the settings popup: theme (**auto** — follows
+nvim's colorscheme, or everforest, catppuccin, gruvbox, tokyonight —
+applied live), the default agent (swaps the live pane and future
+launches), and the `cpu/ram/net` resource bar. Changes persist to
+`~/.config/jaed/settings.json` immediately; `-a` and `--theme` flags
+override the saved defaults when passed (`--theme auto` works too).
+
+In auto mode nvim reports its colorscheme over the editor link (a tiny
+per-workspace file — see `internal/workspace/link.go`), and jaed maps
+it onto the built-in palette it matches: `gruvbox-material` → gruvbox,
+`catppuccin-mocha` → catppuccin, `tokyonight_storm` → tokyonight. A
+scheme with no matching palette leaves the current theme alone.
 
 ## Bring your own agent
 
@@ -218,8 +236,8 @@ queries the pane's terminal and adapts automatically.
 
 ## Roadmap
 
-- **M4** native file-tree pane, project tabs, more themes (catppuccin,
-  gruvbox, tokyonight), auto theme from nvim; deeper pi state via RPC
+- **M4** native file-tree pane, project tabs — progress and design
+  notes live in `ROADMAP.md`
 
 ## Stack
 

@@ -6,6 +6,14 @@
 // invisible in the transcript) and registers a jaed_active_file tool the
 // model can call anytime. Inert when opencode runs outside jaed.
 //
+// It also reports the session state — the model, whether the session is
+// working or retrying, and the tool in flight — to
+// $TMPDIR/jaed-state-<hash-of-workspace>, so jaed's status bar can show
+// what the agent is doing without focusing its pane. opencode's event
+// stream is the source (session.status / session.idle / session.model.selected
+// / session.step.* / session.tool.*). This is the same channel pi's
+// extension (assets/jaed.ts) writes.
+//
 // It also exposes the workspace's agent-authored tools: JavaScript
 // scripts the model writes into .jaed/tools and runs in a sandboxed Node
 // process (permission model + module allowlist; see assets/jaed-tools).
@@ -28,6 +36,12 @@ import * as path from "node:path"
 function linkPath(directory: string): string {
   const hash = createHash("sha256").update(directory).digest("hex").slice(0, 16)
   return path.join(os.tmpdir(), `jaed-active-${hash}`)
+}
+
+/** The session-state file for a workspace directory, matching jaed's path. */
+function statePath(directory: string): string {
+  const hash = createHash("sha256").update(directory).digest("hex").slice(0, 16)
+  return path.join(os.tmpdir(), `jaed-state-${hash}`)
 }
 
 /** Resolve to the canonical form jaed hashes (it uses EvalSymlinks). */
@@ -347,6 +361,93 @@ export default {
       }
     }
 
+    // Session state for jaed's status bar: which model, whether the session
+    // is working (or retrying), and the tool in flight. opencode's event
+    // stream carries the authoritative status, so jaed can monitor a session
+    // without focusing it — the same channel pi's extension writes.
+    type State = { status: "running" | "retry" | "idle"; model: string; activity: string }
+    const states = new Map<string, State>()
+
+    const writeState = async (sessionID: string): Promise<void> => {
+      const st = states.get(sessionID)
+      if (!st) return
+      const dir = await sessionDirectory(sessionID)
+      const report: Record<string, unknown> = { status: st.status, model: st.model }
+      if (st.status === "running" && st.activity) report.activity = st.activity
+      try {
+        fs.writeFileSync(statePath(canonical(dir)), JSON.stringify(report) + "\n")
+      } catch {
+        // best-effort: outside jaed the write may be pointless
+      }
+    }
+
+    const patch = (sessionID: string, next: Partial<State>): void => {
+      const prev = states.get(sessionID) ?? { status: "idle" as const, model: "", activity: "" }
+      states.set(sessionID, { ...prev, ...next })
+      void writeState(sessionID)
+    }
+
+    // Seed the model from the session when the event stream has not named it.
+    const learnModel = async (sessionID: string): Promise<void> => {
+      const st = states.get(sessionID)
+      if (st && st.model) return
+      try {
+        const session = await ctx.session.get({ sessionID })
+        const id = session && session.model && session.model.id
+        if (id) patch(sessionID, { model: id })
+      } catch {
+        // an unknown model just leaves the field blank
+      }
+    }
+
+    const controller = new AbortController()
+    void (async () => {
+      try {
+        for await (const raw of ctx.event.subscribe({ signal: controller.signal })) {
+          const event = raw as { type?: string; properties?: Record<string, unknown> }
+          const props = (event.properties ?? event) as Record<string, unknown>
+          const type = event.type ?? (props.type as string | undefined)
+          const sessionID = props.sessionID as string | undefined
+          if (!type || !sessionID) continue
+
+          switch (type) {
+            case "session.status": {
+              const status = props.status as { type?: string } | undefined
+              const kind = status && status.type
+              if (kind === "busy") patch(sessionID, { status: "running", activity: "" })
+              else if (kind === "retry") patch(sessionID, { status: "retry", activity: "" })
+              else if (kind === "idle") patch(sessionID, { status: "idle", activity: "" })
+              else continue
+              void learnModel(sessionID)
+              break
+            }
+            case "session.idle":
+              patch(sessionID, { status: "idle", activity: "" })
+              break
+            case "session.model.selected": {
+              const model = props.model as { id?: string } | undefined
+              if (model && model.id) patch(sessionID, { model: model.id })
+              break
+            }
+            case "session.step.started": {
+              const model = props.model as { id?: string } | undefined
+              patch(sessionID, model && model.id ? { model: model.id, activity: "" } : { activity: "" })
+              break
+            }
+            case "session.tool.input.started":
+              if (typeof props.name === "string") patch(sessionID, { activity: props.name })
+              break
+            case "session.tool.success":
+            case "session.tool.failed":
+              patch(sessionID, { activity: "" })
+              break
+          }
+        }
+      } catch {
+        // the stream aborts on unload or when the server goes away
+      }
+    })()
+
     // Live context: injected as a system line on every model call, so it
     // is always fresh and never pollutes the user's transcript.
     await ctx.session.hook("context", async (event) => {
@@ -528,5 +629,8 @@ export default {
         },
       })
     })
+
+    // Stop the event stream when the plugin unloads.
+    return () => controller.abort()
   },
 }

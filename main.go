@@ -25,7 +25,7 @@ import (
 
 func main() {
 	themeName := flag.String("theme", "everforest",
-		"theme: "+strings.Join(theme.Names(), ", "))
+		"theme: "+strings.Join(theme.Names(), ", ")+", or auto (follows nvim)")
 	agentName := flag.String("a", "pi",
 		"agent for the side panel: "+strings.Join(agents.Names(), ", "))
 	editorName := flag.String("editor", "nvim", "command for the main pane")
@@ -64,9 +64,17 @@ func main() {
 		agentName = &cfg.Agent
 	}
 
-	th, ok := theme.Get(*themeName)
-	if !ok {
-		fatalf("jaed: unknown theme %q (have: %s)", *themeName, strings.Join(theme.Names(), ", "))
+	// "auto" follows the editor's colorscheme once nvim reports one (see
+	// internal/workspace/link.go); everforest is the standby until then.
+	var th theme.Theme
+	if strings.EqualFold(*themeName, "auto") {
+		th = theme.Everforest
+	} else {
+		t, ok := theme.Get(*themeName)
+		if !ok {
+			fatalf("jaed: unknown theme %q (have: %s, or auto)", *themeName, strings.Join(theme.Names(), ", "))
+		}
+		th = t
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		if err := agents.LoadUser(filepath.Join(home, ".config", "jaed", "agents.conf")); err != nil {
@@ -85,9 +93,11 @@ func main() {
 
 	editorArgs := []string{"."}
 	if filepath.Base(*editorName) == "nvim" {
-		// Report the active buffer via the terminal title: the chrome-mode
-		// "c" key pushes it to the agent pane (see internal/workspace/link.go).
+		// Report the active buffer via the terminal title (the chrome-mode
+		// "c" key pushes it to the agent pane) and the colorscheme via the
+		// theme file (auto mode follows it) — see internal/workspace/link.go.
 		editorArgs = append(editorArgs, workspace.NvimTitleArgs()...)
+		editorArgs = append(editorArgs, workspace.NvimThemeArgs(absDir)...)
 	}
 	specs := []pane.Spec{
 		// "nvim ." opens the workspace folder's file listing; "." resolves

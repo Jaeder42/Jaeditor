@@ -24,7 +24,13 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 /** The live-link file for the current workspace, matching jaed's path. */
 function linkPath(): string {
-  const hash = createHash("sha256").update(process.cwd()).digest("hex").slice(0, 16);
+  let cwd = process.cwd();
+  try {
+    cwd = fs.realpathSync(cwd);
+  } catch {
+    // keep the raw path
+  }
+  const hash = createHash("sha256").update(cwd).digest("hex").slice(0, 16);
   return path.join(os.tmpdir(), `jaed-active-${hash}`);
 }
 
@@ -36,6 +42,55 @@ function readActiveFile(): { path: string; mtimeMs: number } | null {
     return { path: active, mtimeMs: fs.statSync(active).mtimeMs };
   } catch {
     return null;
+  }
+}
+
+// --- session state --------------------------------------------------------
+
+/** The live state file for the current workspace, matching jaed's path. */
+function statePath(): string {
+  // jaed hashes the resolved workspace (EvalSymlinks); resolve here too so
+  // a symlinked cwd does not fork the path.
+  let cwd = process.cwd();
+  try {
+    cwd = fs.realpathSync(cwd);
+  } catch {
+    // keep the raw path
+  }
+  const hash = createHash("sha256").update(cwd).digest("hex").slice(0, 16);
+  return path.join(os.tmpdir(), `jaed-state-${hash}`);
+}
+
+/** The tool currently executing, for the activity report. */
+let currentTool = "";
+
+/** The slice of ExtensionContext publishState needs. */
+type StateContext = {
+  model: { id: string } | undefined;
+  getContextUsage?: () => { percent: number | null } | undefined;
+};
+
+/**
+ * Publish the session state — which model, running/retrying/idle, what it
+ * is doing, and how full its context is — so jaed's status bar can show it
+ * without focusing the pane. Best-effort: jaed runs fine without the channel.
+ */
+function publishState(ctx: StateContext, status: "idle" | "running"): void {
+  const report: { status: string; model: string; activity?: string; context?: number } = {
+    status,
+    model: ctx.model ? ctx.model.id : "",
+  };
+  if (status === "running" && currentTool) report.activity = currentTool;
+  try {
+    const usage = ctx.getContextUsage?.();
+    if (usage && usage.percent !== null) report.context = Math.round(usage.percent);
+  } catch {
+    // context usage is unavailable in some contexts; the field stays absent
+  }
+  try {
+    fs.writeFileSync(statePath(), JSON.stringify(report) + "\n");
+  } catch {
+    // best-effort: outside jaed the write may fail or be pointless
   }
 }
 
@@ -286,6 +341,23 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.notify(`jaed link: editing ${active.path}`, "info");
     }
   });
+
+  // Publish session state for jaed's status bar: the model on start and
+  // whenever it changes, running while the agent works, the tool in flight
+  // as it starts and finishes, idle once it fully settles. Inert outside jaed.
+  pi.on("session_start", (_event, ctx) => publishState(ctx, "idle"));
+  pi.on("model_select", (_event, ctx) => publishState(ctx, ctx.isIdle() ? "idle" : "running"));
+  pi.on("agent_start", (_event, ctx) => publishState(ctx, "running"));
+  pi.on("turn_start", (_event, ctx) => publishState(ctx, "running"));
+  pi.on("tool_execution_start", (event, ctx) => {
+    currentTool = event.toolName;
+    publishState(ctx, "running");
+  });
+  pi.on("tool_execution_end", (_event, ctx) => {
+    currentTool = "";
+    publishState(ctx, "running");
+  });
+  pi.on("agent_settled", (_event, ctx) => publishState(ctx, "idle"));
 
   // Inject the active file as a live system-prompt section on every
   // prompt; remove the section when no file is open. Also inject the

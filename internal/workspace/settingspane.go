@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -26,16 +27,32 @@ type settingsRow struct {
 	agentName string               // for agent rows: what to persist
 }
 
-// settingsRows builds the popup's rows: theme options, then agent
-// options, with the current selections marked.
+// settingsRows builds the popup's rows: theme options (auto first — it
+// follows the editor's colorscheme), then agent options, with the current
+// selections marked.
 func (a App) settingsRows() []settingsRow {
 	rows := []settingsRow{
 		{text: " settings ", header: true},
 		{text: " theme ", header: true},
 	}
+	auto := strings.EqualFold(a.cfg.Theme, themeAutoName)
+	autoLabel := "  auto (nvim)"
+	if auto {
+		// while following the editor, the row shows the applied palette
+		autoLabel = "● auto (" + a.theme.Name + ")"
+	}
+	rows = append(rows, settingsRow{text: autoLabel, apply: func(app *App) tea.Cmd {
+		if strings.EqualFold(app.cfg.Theme, themeAutoName) {
+			return nil
+		}
+		app.cfg.Theme = themeAutoName
+		_ = settings.Save(app.cfg)
+		app.themeMod = time.Time{} // next sync re-reads nvim's report
+		return nil
+	}})
 	for _, name := range theme.Names() {
 		label := "  " + name
-		if name == a.theme.Name {
+		if name == a.theme.Name && !auto {
 			label = "● " + name
 		}
 		themeName := name

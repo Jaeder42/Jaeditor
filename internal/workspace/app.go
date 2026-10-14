@@ -21,6 +21,7 @@ package workspace
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -72,8 +73,13 @@ type App struct {
 	statsCollector *stats.Collector
 	usage          stats.Usage
 	statsOK        bool
-	activeFile     string // live-link path (see link.go)
-	activeSeen     string // last title published to it
+	activeFile     string     // live-link path (see link.go)
+	activeSeen     string     // last title published to it
+	themeFile      string     // editor colorscheme report path (see link.go)
+	themeMod       time.Time  // mtime gate for the theme file read
+	agentStateFile string     // agent session-state report path (see link.go)
+	agentMod       time.Time  // mtime gate for the agent state read
+	agentState     agentState // last report: model + running/idle
 	// bufferQuery asks the editor pane for the active file; overridable
 	// in tests.
 	bufferQuery func() (string, error)
@@ -103,6 +109,8 @@ func New(panes []pane.Pane, specs []pane.Spec, cwd string, th theme.Theme, cfg s
 	}
 	app.bufferQuery = app.editorBufferTitle
 	app.activeFile = activeFilePath(cwd)
+	app.themeFile = themeFilePath(cwd)
+	app.agentStateFile = agentStateFilePath(cwd)
 	app.cfg = cfg
 	app.statsCollector = stats.New()
 	app.panes[PaneMain].Focus()
@@ -126,6 +134,8 @@ func (a App) Init() tea.Cmd {
 
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	a.syncActiveFile()
+	a.syncTheme()
+	a.syncAgentState()
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -620,6 +630,10 @@ func (a *App) swapAgent(ag agents.Agent) tea.Cmd {
 	}
 	a.panes[PaneAgent] = p
 	a.setFocus(PaneAgent)
+	// The new agent reports its own state (or none at all — opencode
+	// and shells never write the file); drop the old agent's report.
+	a.agentState = agentState{}
+	a.agentMod = time.Time{}
 	return tea.Batch(p.Init(), p.ExitCmd(), a.applyLayout())
 }
 
@@ -843,8 +857,12 @@ func (a App) statusBar() string {
 	fg := lipgloss.NewStyle().Background(surface).Foreground(lipgloss.Color(t.Fg))
 	dim := lipgloss.NewStyle().Background(surface).Foreground(lipgloss.Color(t.Dim))
 
+	themeLabel := t.Name
+	if strings.EqualFold(a.cfg.Theme, themeAutoName) {
+		themeLabel = themeAutoName + ":" + t.Name
+	}
 	left := fg.Render(" jaed ") +
-		dim.Render("· "+filepath.Base(a.cwd)+" · "+t.Name)
+		dim.Render("· "+filepath.Base(a.cwd)+" · "+themeLabel)
 	if a.gitMode {
 		left += dim.Render(" · git")
 	}
@@ -869,6 +887,30 @@ func (a App) statusBar() string {
 			panes.WriteString(" " + fg.Render(paneLabel(p)))
 		default:
 			panes.WriteString(dim.Render("○ " + paneLabel(p)))
+		}
+		// The agent pane appends its live self-report: the model, dimmed;
+		// what it is doing while it works (the activity, else a generic
+		// running marker); a retry while it backs off; and its context
+		// level, dimmed. See link.go's state channel.
+		if i == PaneAgent && !a.dead[i] && !a.hidden[i] {
+			if a.agentState.Model != "" {
+				panes.WriteString(dim.Render(" · " + a.agentState.Model))
+			}
+			switch a.agentState.Status {
+			case "running":
+				label := "running"
+				if a.agentState.Activity != "" {
+					label = a.agentState.Activity
+				}
+				panes.WriteString(lipgloss.NewStyle().
+					Background(surface).Foreground(lipgloss.Color(t.Success)).Render(" · " + label))
+			case "retry":
+				panes.WriteString(lipgloss.NewStyle().
+					Background(surface).Foreground(lipgloss.Color(t.Warn)).Render(" · retrying"))
+			}
+			if a.agentState.Context != nil {
+				panes.WriteString(dim.Render(fmt.Sprintf(" · %d%%", *a.agentState.Context)))
+			}
 		}
 		// The terminal slot shows which tab is active.
 		if i == PaneTerm && a.termTabCount() > 1 {
