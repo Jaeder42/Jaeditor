@@ -86,8 +86,12 @@ In both the git and tools views, **drag with the mouse to highlight text**;
 releasing copies it to the system clipboard (`pbcopy` on macOS,
 `wl-copy`/`xclip`/`xsel` on Linux) and the footer confirms it. A drag stays
 within the pane it starts in — the list or the diff/code view — so it never
-picks up the neighbouring pane or the box borders. jaed keeps mouse
-reporting on, so this stands in for the terminal's own selection.
+picks up the neighbouring pane or the box borders. The same goes for the
+grid panes: dragging over a plain shell (or any guest that has not enabled
+mouse tracking) highlights its visible text and copies it on release, with
+the status bar confirming. Tracking guests (nvim, opencode) keep the mouse
+for themselves. jaed keeps mouse reporting on, so this stands in for the
+terminal's own selection.
 
 ### Terminal tabs
 

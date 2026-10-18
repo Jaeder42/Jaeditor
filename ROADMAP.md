@@ -32,6 +32,11 @@ this file carries the detail.
 
 ### Recent fixes
 
+- **Terminal copy** — jaed takes mouse reporting, so a drag over a plain
+  shell used to do nothing (the host terminal never saw it). Grid panes
+  whose guest has not enabled mouse tracking now get the same drag-to-copy
+  selection as the git/tools views, in pane-local coordinates and clipped
+  to the box; the status bar confirms the copy.
 - **Mouse hitbox** — mouse events arrive in zero-based screen rows but
   the grid starts below the resource bar: the hit test now shifts by
   `topRows`, so clicks land on the line under the cursor (previously

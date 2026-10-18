@@ -54,6 +54,7 @@ func (a App) termOrder() []termTab {
 // setTermOrder installs a new full tab order with tabs[activePos] active,
 // writing that tab back into the slot arrays. Focus is the caller's job.
 func (a *App) setTermOrder(tabs []termTab, activePos int) {
+	a.paneSel.clear()
 	act := tabs[activePos]
 	rest := make([]termTab, 0, len(tabs)-1)
 	rest = append(rest, tabs[:activePos]...)

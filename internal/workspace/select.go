@@ -246,6 +246,72 @@ func (a App) rightPaneX0() int {
 	}
 }
 
+// paneSelectRegion is grid pane i's content rectangle in pane-local
+// coordinates: row/column zero is the first cell inside the box border.
+func (a App) paneSelectRegion(i int) selectRegion {
+	cols, rows := a.panes[i].Size()
+	return selectRegion{x0: 0, y0: 0, x1: max(0, cols-1), y1: max(0, rows-1)}
+}
+
+// paneCell maps a grid cell (already shifted by the resource bar) onto a
+// pane-local content cell.
+func (a App) paneCell(i, x, y int) cell {
+	x, y = a.localCoords(i, x, y)
+	return cell{x: x, y: y}
+}
+
+// paneMouse drives text selection inside a grid pane whose guest has not
+// enabled mouse tracking (shells and other plain programs). Tracking guests
+// keep the mouse for themselves. A press anchors, motion extends, and the
+// release is handled by mouse once the selection is active.
+func (a *App) paneMouse(i int, msg tea.MouseMsg, x, y int) {
+	if _, ok := msg.(tea.MouseClickMsg); ok {
+		a.paneSel.clear()
+	}
+	m := msg.Mouse()
+	p := a.paneCell(i, x, y)
+	switch msg.(type) {
+	case tea.MouseClickMsg:
+		if m.Button == tea.MouseLeft {
+			a.paneSel.start(p, a.paneSelectRegion(i))
+			a.paneSelPane = i
+		}
+	case tea.MouseMotionMsg:
+		if m.Button == tea.MouseLeft {
+			a.paneSel.extend(p)
+		}
+	}
+}
+
+// copyPaneSelection copies the highlighted cells of the active grid pane to
+// the system clipboard, using the pane's own rendered view (so the copied
+// text matches what is on screen) and confirming it in the status bar.
+func (a *App) copyPaneSelection() {
+	i := a.paneSelPane
+	text := ""
+	if i >= 0 && i < len(a.panes) && !a.dead[i] {
+		text = a.paneSel.text(strings.Split(a.panes[i].View(), "\n"))
+	}
+	a.paneSel.clear()
+	if text == "" {
+		return
+	}
+	if !clipboardWrite(text) {
+		a.copyNotice, a.copyNoticeErr = "clipboard unavailable", true
+		return
+	}
+	a.copyNotice, a.copyNoticeErr = copiedLabel(text), false
+}
+
+// copiedLabel is the confirmation shown after a copy: "copied" for one
+// line, "copied N lines" for several.
+func copiedLabel(text string) string {
+	if n := strings.Count(text, "\n") + 1; n > 1 {
+		return fmt.Sprintf("copied %d lines", n)
+	}
+	return "copied"
+}
+
 // selectMouse drives the overlay text selection: press to anchor, drag to
 // extend, release to copy the highlighted text to the clipboard.
 func (a *App) selectMouse(msg tea.MouseMsg) {
@@ -287,9 +353,5 @@ func (a *App) copySelection() {
 		a.setOverlayNotice("clipboard unavailable", true)
 		return
 	}
-	if n := strings.Count(text, "\n") + 1; n > 1 {
-		a.setOverlayNotice(fmt.Sprintf("copied %d lines", n), false)
-	} else {
-		a.setOverlayNotice("copied", false)
-	}
+	a.setOverlayNotice(copiedLabel(text), false)
 }

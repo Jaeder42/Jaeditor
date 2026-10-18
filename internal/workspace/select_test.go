@@ -205,3 +205,51 @@ func TestGitSelectionCopies(t *testing.T) {
 		t.Errorf("a click should not copy, got %q", copied)
 	}
 }
+
+// TestPaneSelectionCopies: a drag in a plain shell pane (one whose guest
+// did not enable mouse tracking) highlights and copies its rendered text,
+// since jaed takes mouse reporting and the host terminal cannot select.
+func TestPaneSelectionCopies(t *testing.T) {
+	a := newTestApp(t)
+	a.waitView(t, "TERM-MARK")
+
+	var copied string
+	old := clipboardWrite
+	clipboardWrite = func(s string) bool { copied = s; return true }
+	t.Cleanup(func() { clipboardWrite = old })
+
+	// The marker sits on the terminal pane's first content row.
+	r := a.rects[PaneTerm]
+	x0 := r.X + 1
+	y0 := r.Y + 1 + a.topRows()
+
+	model, _ := a.Update(tea.MouseClickMsg{X: x0, Y: y0, Button: tea.MouseLeft})
+	a = model.(App)
+	if !a.paneSel.active || a.paneSelPane != PaneTerm {
+		t.Fatal("a press in the terminal pane should start a selection")
+	}
+	model, _ = a.Update(tea.MouseMotionMsg{X: x0 + 8, Y: y0, Button: tea.MouseLeft})
+	a = model.(App)
+	model, _ = a.Update(tea.MouseReleaseMsg{X: x0 + 8, Y: y0, Button: tea.MouseLeft})
+	a = model.(App)
+
+	if a.paneSel.active {
+		t.Error("release should end the selection")
+	}
+	if copied != "TERM-MARK" {
+		t.Errorf("copied %q, want %q", copied, "TERM-MARK")
+	}
+	if !strings.Contains(stripANSI(a.View().Content), "copied") {
+		t.Errorf("the status bar should confirm the copy, view:\n%s", stripANSI(a.View().Content))
+	}
+
+	// A bare click copies nothing.
+	copied = ""
+	model, _ = a.Update(tea.MouseClickMsg{X: x0, Y: y0, Button: tea.MouseLeft})
+	a = model.(App)
+	model, _ = a.Update(tea.MouseReleaseMsg{X: x0, Y: y0, Button: tea.MouseLeft})
+	a = model.(App)
+	if copied != "" {
+		t.Errorf("a click should not copy, got %q", copied)
+	}
+}

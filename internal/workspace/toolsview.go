@@ -83,6 +83,7 @@ func (v toolsView) selectedLines() []string {
 func (a *App) openToolsView() {
 	a.setFocus(-1)
 	a.sel.clear()
+	a.paneSel.clear()
 	a.toolsMode = true
 	a.tools.reload(a.cwd)
 }

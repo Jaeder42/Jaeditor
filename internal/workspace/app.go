@@ -46,29 +46,33 @@ const (
 
 // App is the workspace tea.Model.
 type App struct {
-	panes        []pane.Pane
-	specs        []pane.Spec // original spawn specs, for respawn
-	rects        []Rect
-	dead         []bool
-	hidden       []bool      // pane toggled away from the layout (process lives on)
-	spawnedAt    []time.Time // respawn time of each pane's current instance
-	termTabs     []termTab   // inactive terminal tabs, in display order (see tabs.go)
-	termPos      int         // position of the active terminal tab in the full order
-	layout       Layout
-	focus        int // pane index, or -1 for chrome mode
-	lastFocus    int
-	cwd          string // absolute workspace path
-	theme        theme.Theme
-	pickerOpen   bool
-	pick         picker
-	gitMode      bool
-	git          gitView
-	toolsMode    bool
-	tools        toolsView
-	sel          selection // mouse text selection in an overlay view
-	settingsOpen bool
-	settingsSel  int
-	cfg          settings.Settings
+	panes         []pane.Pane
+	specs         []pane.Spec // original spawn specs, for respawn
+	rects         []Rect
+	dead          []bool
+	hidden        []bool      // pane toggled away from the layout (process lives on)
+	spawnedAt     []time.Time // respawn time of each pane's current instance
+	termTabs      []termTab   // inactive terminal tabs, in display order (see tabs.go)
+	termPos       int         // position of the active terminal tab in the full order
+	layout        Layout
+	focus         int // pane index, or -1 for chrome mode
+	lastFocus     int
+	cwd           string // absolute workspace path
+	theme         theme.Theme
+	pickerOpen    bool
+	pick          picker
+	gitMode       bool
+	git           gitView
+	toolsMode     bool
+	tools         toolsView
+	sel           selection // mouse text selection in an overlay view
+	paneSel       selection // mouse text selection inside a grid pane (pane-local)
+	paneSelPane   int       // grid slot paneSel belongs to
+	copyNotice    string    // transient status-bar confirmation of a pane copy
+	copyNoticeErr bool
+	settingsOpen  bool
+	settingsSel   int
+	cfg           settings.Settings
 	// Resource bar state (see statsview.go). The collector is shared by
 	// pointer across App copies; usage is the latest sample.
 	statsCollector *stats.Collector
@@ -166,6 +170,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case tea.KeyPressMsg:
+		a.copyNotice = ""
 		if isQuitChord(msg) {
 			a.closeAll()
 			return a, tea.Quit
@@ -190,6 +195,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.mouseWheel(msg)
 
 	case tea.MouseMsg:
+		if _, ok := msg.(tea.MouseClickMsg); ok {
+			a.copyNotice = ""
+		}
 		return a, a.mouse(msg)
 
 	case statsSampleMsg:
@@ -415,6 +423,9 @@ func (a *App) togglePane(i int) tea.Cmd {
 }
 
 func (a *App) setFocus(i int) {
+	if a.paneSel.active && i != a.paneSelPane {
+		a.paneSel.clear()
+	}
 	if a.focus >= 0 {
 		a.lastFocus = a.focus
 	}
@@ -499,6 +510,7 @@ func (a *App) respawn(i int) tea.Cmd {
 func (a *App) openGitView() {
 	a.setFocus(-1)
 	a.sel.clear()
+	a.paneSel.clear()
 	a.gitMode = true
 	a.git.reload(a.cwd)
 }
@@ -767,16 +779,42 @@ func (a *App) mouse(msg tea.MouseMsg) tea.Cmd {
 	// Screen row → grid row: the resource bar sits above the grid, so
 	// raw screen coordinates would hit one line below the cursor.
 	m.Y -= a.topRows()
+
+	// An in-progress pane selection owns motion and release even when the
+	// drag leaves the pane: the selection region clamps it.
+	if a.paneSel.active {
+		switch msg.(type) {
+		case tea.MouseMotionMsg:
+			if m.Button == tea.MouseLeft {
+				a.paneSel.extend(a.paneCell(a.paneSelPane, m.X, m.Y))
+				return nil
+			}
+		case tea.MouseReleaseMsg:
+			a.paneSel.extend(a.paneCell(a.paneSelPane, m.X, m.Y))
+			a.copyPaneSelection()
+			return nil
+		}
+	}
+
 	i := a.paneAt(m.X, m.Y)
 	if i < 0 {
+		if _, ok := msg.(tea.MouseClickMsg); ok {
+			a.paneSel.clear()
+		}
 		return nil
 	}
 	// A click — any button press — moves focus; motion and releases do
-	// not, so dragging across panes never steals focus mid-selection.
-	if _, ok := msg.(tea.MouseClickMsg); ok && a.focus != i {
-		a.setFocus(i)
+	// not, so dragging across panes never steals focus mid-selection. A
+	// new click also drops any selection left over from a previous drag.
+	if _, ok := msg.(tea.MouseClickMsg); ok {
+		a.paneSel.clear()
+		if a.focus != i {
+			a.setFocus(i)
+		}
 	}
 	if !a.panes[i].MouseTracking() {
+		// No guest mouse mode: jaed owns the drag and copies on release.
+		a.paneMouse(i, msg, m.X, m.Y)
 		return nil
 	}
 	x, y := a.localCoords(i, m.X, m.Y)
@@ -884,10 +922,15 @@ func (a App) blitPane(rows *[]string, i int) {
 				Foreground(lipgloss.Color(a.theme.Bg))),
 		)
 	} else {
+		content := a.panes[i].View()
+		// Pane selections are in pane-local content cells, matching View.
+		if a.paneSel.active && a.paneSelPane == i {
+			content = highlightSelection(content, a.paneSel, a.selectionStyle())
+		}
 		box = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color(a.borderColor(i))).
-			Render(a.panes[i].View())
+			Render(content)
 	}
 
 	lines := strings.Split(box, "\n")
@@ -1000,6 +1043,13 @@ func (a App) statusBar() string {
 
 	var hint string
 	switch {
+	case a.copyNotice != "":
+		notice := lipgloss.NewStyle().
+			Background(surface).Foreground(lipgloss.Color(t.Success))
+		if a.copyNoticeErr {
+			notice = notice.Foreground(lipgloss.Color(t.Error))
+		}
+		hint = notice.Render(a.copyNotice)
 	case a.gitMode:
 		hint = dim.Render(a.gitHint())
 	case a.toolsMode:
